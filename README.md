@@ -128,5 +128,22 @@ parcourir).
 ## Tests
 
 ```bash
-PYTHONPATH=src python3 -m pytest tests/ -q --no-cov
+make test          # ou : python3 -m pytest
 ```
+
+## Publier une version
+
+```bash
+./release.sh patch      # 0.1.0 → 0.1.1
+./release.sh minor      # 0.1.0 → 0.2.0
+./release.sh 1.0.0      # version explicite
+```
+
+Le script rejoue les tests, incrémente `__version__` dans
+`src/jewelbox_ripper/__init__.py` — la seule source de vérité, `pyproject.toml`
+la lit dynamiquement —, vérifie que le paquet se construit, puis crée le commit
+et le tag `vX.Y.Z` et les pousse.
+
+Le tag déclenche `.github/workflows/release.yml`, qui rejoue la gate, contrôle
+que le tag correspond bien à `__version__`, construit le wheel et le sdist, et
+publie la GitHub Release avec les deux artefacts.

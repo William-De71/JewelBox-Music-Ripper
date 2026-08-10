@@ -2,7 +2,14 @@
 
 import pytest
 
-from jewelbox_ripper.config import Config, ConfigError, build_config, load_config
+from jewelbox_ripper.config import (
+    CONFIG_ENV,
+    Config,
+    ConfigError,
+    build_config,
+    default_config_path,
+    load_config,
+)
 
 
 class TestBuildConfig:
@@ -92,3 +99,36 @@ class TestLoadConfig:
         config_file.write_text('library_path = [invalide')
         with pytest.raises(ConfigError, match='TOML invalide'):
             load_config(config_file)
+
+    def test_fichier_illisible(self, tmp_path):
+        config_file = tmp_path / 'config.toml'
+        config_file.write_text('library_path = "/m"')
+        config_file.chmod(0o000)
+        try:
+            with pytest.raises(ConfigError, match='impossible'):
+                load_config(config_file)
+        finally:
+            config_file.chmod(0o600)
+
+
+class TestDefaultConfigPath:
+    def test_respecte_xdg_config_home(self, monkeypatch):
+        monkeypatch.delenv(CONFIG_ENV, raising=False)
+        monkeypatch.setenv('XDG_CONFIG_HOME', '/tmp/xdg-perso')
+
+        path = default_config_path()
+        assert str(path).startswith('/tmp/xdg-perso')
+        assert path.name == 'config.toml'
+
+    def test_repli_sur_dot_config(self, monkeypatch):
+        monkeypatch.delenv(CONFIG_ENV, raising=False)
+        monkeypatch.delenv('XDG_CONFIG_HOME', raising=False)
+
+        path = default_config_path()
+        assert '.config' in str(path)
+        assert 'jewelbox-music-ripper' in str(path)
+
+    def test_variable_dediee_prioritaire(self, monkeypatch):
+        # Utile pour tester ou faire coexister plusieurs configurations.
+        monkeypatch.setenv(CONFIG_ENV, '/tmp/autre/emplacement.toml')
+        assert str(default_config_path()) == '/tmp/autre/emplacement.toml'

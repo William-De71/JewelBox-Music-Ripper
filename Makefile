@@ -3,7 +3,7 @@
 CONFIG_DIR ?= $(HOME)/.config/jewelbox-music-ripper
 CONFIG     := $(CONFIG_DIR)/config.toml
 
-.PHONY: help install uninstall config test rip dry-run
+.PHONY: help install uninstall config test build clean rip dry-run
 
 help:
 	@echo "Cibles disponibles :"
@@ -11,7 +11,9 @@ help:
 	@echo "  make config    - copie config.example.toml vers ~/.config (ne l'ecrase pas)"
 	@echo "  make dry-run   - identifie le CD insere sans rien ecrire"
 	@echo "  make rip       - extrait le CD insere"
-	@echo "  make test      - lance les tests"
+	@echo "  make test      - tests + gate de couverture 95 % (comme la CI)"
+	@echo "  make build     - construit le wheel et le sdist dans dist/"
+	@echo "  make clean     - supprime les artefacts de build et de tests"
 	@echo "  make uninstall - desinstalle la commande"
 
 # Mode editable : les modifications du code sont prises en compte sans
@@ -44,5 +46,16 @@ dry-run:
 rip:
 	PYTHONPATH=src python3 -m jewelbox_ripper
 
+# Identique a la gate appliquee par la CI sur chaque PR (min 95 %).
 test:
-	PYTHONPATH=src python3 -m pytest tests/ -q --no-cov
+	python3 -m pytest
+
+# Meme chaine que le job de release : wheel + sdist, puis controle des metadonnees.
+build: clean
+	python3 -m build
+	python3 -m twine check dist/*
+
+clean:
+	rm -rf dist build htmlcov .coverage coverage.xml
+	rm -rf src/*.egg-info .pytest_cache
+	find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true

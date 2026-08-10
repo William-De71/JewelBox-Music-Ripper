@@ -183,3 +183,98 @@ class TestDivers:
 
     def test_base_url_sans_slash_final(self):
         assert JewelBoxApi('http://x:3001/').base_url == 'http://x:3001'
+
+    def test_ping_vrai_si_disponible(self, api, monkeypatch):
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: FakeResponse({'status': 'ok'}))
+        assert api.ping() is True
+
+    def test_reponse_illisible(self, api, monkeypatch):
+        class NotJson:
+            def read(self):
+                return b'<html>erreur passerelle</html>'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: NotJson())
+
+        with pytest.raises(ApiError, match='illisible'):
+            api.find_duplicate('A', 'B')
+
+    def test_reponse_vide_acceptee(self, api, monkeypatch):
+        class Empty:
+            def read(self):
+                return b''
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: Empty())
+        # Un corps vide est licite (204) et ne doit pas lever.
+        assert api.find_duplicate('A', 'B') is None
+
+
+class TestScan:
+    def test_start_scan(self, api, monkeypatch):
+        captured = {}
+
+        def fake_urlopen(request, timeout=None):
+            captured['method'] = request.get_method()
+            captured['url'] = request.full_url
+            captured['timeout'] = timeout
+            return FakeResponse({'running': True})
+
+        monkeypatch.setattr('urllib.request.urlopen', fake_urlopen)
+        api.start_scan()
+
+        assert captured['method'] == 'POST'
+        assert captured['url'].endswith('/api/player/scan')
+        # Le scan parcourt toute la bibliothèque : bien plus long qu'un appel
+        # ordinaire, d'où un délai dédié.
+        assert captured['timeout'] > 60
+
+    def test_scan_status(self, api, monkeypatch):
+        monkeypatch.setattr('urllib.request.urlopen', lambda r, timeout=None:
+                            FakeResponse({'running': False,
+                                          'result': {'matched_tracks': 13}}))
+        status = api.scan_status()
+
+        assert status['running'] is False
+        assert status['result']['matched_tracks'] == 13
+
+
+class TestErrorPayload:
+    def test_corps_non_json_ignore(self, api, monkeypatch):
+        # Une erreur avec un corps HTML ne doit pas masquer le code HTTP.
+        def fake_urlopen(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 503, 'Service Unavailable', {},
+                BytesIO(b'<html>maintenance</html>'))
+
+        monkeypatch.setattr('urllib.request.urlopen', fake_urlopen)
+        with pytest.raises(ApiError) as excinfo:
+            api.scan_status()
+
+        assert excinfo.value.status == 503
+        assert excinfo.value.payload == {}
+
+    def test_conflit_sans_message(self, api, monkeypatch):
+        def fake_urlopen(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 409, 'Conflict', {}, BytesIO(b''))
+
+        monkeypatch.setattr('urllib.request.urlopen', fake_urlopen)
+        with pytest.raises(AlbumConflict) as excinfo:
+            api.create_album(AlbumPayload(title='A', artist_name='B'))
+
+        # Faute de message serveur, on retombe sur la raison HTTP.
+        assert 'Conflict' in str(excinfo.value)

@@ -1,0 +1,123 @@
+name: Pull request checks
+run-name: PR checks ${{ github.head_ref }}
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Unit tests & coverage (95%)
+    runs-on: ubuntu-latest
+    # Needed by the sticky coverage comment below.
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # flac is the only external binary the test suite really runs: the tagging
+      # tests write and re-read genuine FLAC files. cdparanoia and the other
+      # encoders are stubbed, so they are not needed here.
+      - name: 💿 Install flac
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flac
+
+      # mutagen is imported directly by the tagging tests. discid and
+      # musicbrainzngs are faked through sys.modules, so the suite runs without
+      # them — and without libdiscid or any network access.
+      - name: 📦 Install test dependencies
+        run: pip install pytest pytest-cov mutagen
+
+      - name: ✅ Run tests with coverage gate (min 95% on logic)
+        run: python -m pytest --cov-report=term --cov-report=html --cov-report=xml
+
+      # The coverage table, readable without downloading anything: on the run's
+      # summary page, and as a sticky comment kept up to date on the PR.
+      - name: 📝 Coverage summary (run page)
+        if: always()
+        run: |
+          if python -m coverage report --format=markdown > coverage-summary.md 2>/dev/null; then
+            cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '⚠️ Rapport de couverture indisponible (les tests ont probablement échoué avant).' > coverage-summary.md
+            cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 💬 Coverage comment (PR, sticky)
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- pytest-coverage -->';
+            let table;
+            try {
+              table = fs.readFileSync('coverage-summary.md', 'utf8');
+            } catch {
+              table = '⚠️ Rapport de couverture indisponible (les tests ont probablement échoué avant).';
+            }
+            const body = `${marker}\n${table}`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+      # Test and coverage reports, downloadable from the run page — also on failure,
+      # which is precisely when they matter.
+      - name: ↗️ Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            htmlcov
+            coverage.xml
+          retention-days: 7
+
+  build:
+    name: Package build & install check
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 📦 Install build tooling
+        run: pip install build twine
+
+      - name: 🏗️ Build wheel & sdist
+        run: python -m build
+
+      # Catches broken metadata before it reaches a release.
+      - name: 🔍 Check package metadata
+        run: twine check dist/*
+
+      # The wheel must expose a working `jewelbox-rip` entry point. Installed
+      # without the optional runtime deps (libdiscid is not available here), so
+      # only --version and --help are exercised — enough to catch an import-time
+      # or packaging break.
+      - name: 🚀 Install the wheel and check the entry point
+        run: |
+          pip install dist/*.whl
+          jewelbox-rip --version
+          jewelbox-rip --help

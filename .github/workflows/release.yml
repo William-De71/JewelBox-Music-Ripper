@@ -1,0 +1,97 @@
+name: Release
+run-name: Release JewelBox Music Ripper ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write   # créer la GitHub Release
+
+# Une seule release à la fois.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build wheel + sdist and publish the Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: 💿 Install flac
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flac
+
+      - name: 📦 Install tooling
+        run: pip install build twine pytest pytest-cov mutagen
+
+      # La gate est rejouée sur le tag : release.sh l'a déjà passée en local,
+      # mais un tag poussé à la main ne doit pas contourner les tests.
+      - name: ✅ Tests + gate de couverture (min 95 %)
+        run: python -m pytest
+
+      # Le tag est la référence : si la version du paquet en diverge, la
+      # release publierait un artefact mal nommé.
+      - name: 🔖 Vérifier que le tag correspond à __version__
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(python -c 'import sys; sys.path.insert(0, "src"); import jewelbox_ripper; print(jewelbox_ripper.__version__)')"
+          echo "tag=$TAG  paquet=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Le tag v$TAG ne correspond pas à __version__ = $PKG"
+            exit 1
+          fi
+
+      - name: 🏗️ Build wheel & sdist
+        run: python -m build
+
+      - name: 🔍 Check package metadata
+        run: twine check dist/*
+
+      - name: 🚀 Créer la GitHub Release avec les artefacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+          body: |
+            ## 💿 JewelBox Music Ripper ${{ github.ref_name }}
+
+            Extraction de CD audio vers une bibliothèque
+            [JewelBox Music Library](https://github.com/William-De71/jewelbox-music-library).
+
+            ### Installation
+
+            Dépendances système (Fedora) :
+            ```bash
+            sudo dnf install cdparanoia flac python3-mutagen python3-discid \
+                             python3-musicbrainzngs
+            sudo dnf install opus-tools lame   # formats optionnels
+            ```
+
+            Puis le paquet, depuis le wheel joint à cette release :
+            ```bash
+            pip install --user jewelbox_music_ripper-*-py3-none-any.whl
+            ```
+
+            ### Premier lancement
+            ```bash
+            jewelbox-rip --dry-run    # identifie le CD, n'écrit rien
+            ```
+
+            La configuration vit dans
+            `~/.config/jewelbox-music-ripper/config.toml` : seule la ligne
+            `library_path` est obligatoire, et doit désigner le dossier scanné
+            par le serveur.

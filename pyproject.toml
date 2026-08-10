@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jewelbox-music-ripper"
-version = "0.1.0"
+# Version lue depuis src/jewelbox_ripper/__init__.py : une seule source de
+# vérité, que release.sh est seul à modifier.
+dynamic = ["version"]
 description = "Extraction de CD audio vers une bibliothèque JewelBox Music"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,9 +27,32 @@ jewelbox-rip = "jewelbox_ripper.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.dynamic]
+version = { attr = "jewelbox_ripper.__version__" }
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=jewelbox_ripper --cov-report=term-missing"
+pythonpath = ["src"]
+addopts = "--cov --cov-report=term-missing"
 
 [tool.coverage.run]
+branch = true
 source = ["src/jewelbox_ripper"]
+# Le code frontière — CLI interactive, pilotage de cdparanoia/flac, lecture du
+# TOC, écriture mutagen — s'exerce avec un vrai lecteur et un vrai serveur, pas
+# en CI headless. Toute la logique restante doit être couverte à 95 % minimum.
+omit = [
+    "src/jewelbox_ripper/__main__.py",
+    "src/jewelbox_ripper/cli.py",
+]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+precision = 1
+# Les branches de repli sur import manquant ne s'exercent qu'avec la
+# dépendance absente, ce que la CI installe justement.
+exclude_also = [
+    "raise MissingToolError",
+    "except ImportError:",
+]
