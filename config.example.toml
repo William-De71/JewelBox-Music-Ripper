@@ -1,0 +1,27 @@
+# Configuration de JewelBox Music Ripper.
+# À copier vers ~/.config/jewelbox-music-ripper/config.toml puis adapter.
+
+# REQUIS — racine de la bibliothèque musicale.
+# Doit désigner le même dossier que le réglage « Chemin de la bibliothèque
+# musicale » du serveur JewelBox. Si le serveur tourne ailleurs, indique ici le
+# point de montage local du partage, qui doit être accessible en écriture.
+library_path = "/mnt/musique"
+
+# URL du serveur, pour vérifier la collection et lancer le scan.
+server_url = "http://localhost:3001"
+
+# Format de sortie : flac (sans perte, recommandé), opus ou mp3.
+audio_format = "flac"
+
+# Qualité — dépend du format :
+#   flac : 0 à 8   (8 = plus compressé, qualité identique car sans perte)
+#   opus : débit en kbps, ex. "192"
+#   mp3  : 0 à 9   (0 = meilleure qualité)
+# quality = "8"
+
+# Lecteur optique. Laisse commenté pour la détection automatique.
+# device = "/dev/sr0"
+
+# Correction d'erreurs de lecture. true (défaut) relit les secteurs douteux :
+# plus lent, mais c'est tout l'intérêt pour de l'archivage.
+# paranoia = true

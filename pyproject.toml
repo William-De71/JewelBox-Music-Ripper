@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jewelbox-music-ripper"
+version = "0.1.0"
+description = "Extraction de CD audio vers une bibliothèque JewelBox Music"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "mutagen>=1.45",         # écriture des tags
+    "discid>=1.2",           # Disc ID depuis le TOC (nécessite libdiscid)
+    "musicbrainzngs>=0.7",   # identification du disque
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov>=4"]
+
+[project.scripts]
+jewelbox-rip = "jewelbox_ripper.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=jewelbox_ripper --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/jewelbox_ripper"]
