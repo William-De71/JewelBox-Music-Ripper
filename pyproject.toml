@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77 minimum : c'est la version qui accepte une expression SPDX en chaîne pour
+# project.license, la table { text = … } étant dépréciée (retrait en 02/2027).
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,7 +12,8 @@ dynamic = ["version"]
 description = "Extraction de CD audio vers une bibliothèque JewelBox Music"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 
 dependencies = [
     "mutagen>=1.45",         # écriture des tags
