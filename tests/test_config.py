@@ -4,12 +4,19 @@ import pytest
 
 from jewelbox_ripper.config import (
     CONFIG_ENV,
+    DISCOGS_TOKEN_ENV,
     Config,
     ConfigError,
     build_config,
     default_config_path,
     load_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def sans_token_herite(monkeypatch):
+    """Isole les tests d'un DISCOGS_TOKEN présent dans la session."""
+    monkeypatch.delenv(DISCOGS_TOKEN_ENV, raising=False)
 
 
 class TestBuildConfig:
@@ -132,3 +139,42 @@ class TestDefaultConfigPath:
         # Utile pour tester ou faire coexister plusieurs configurations.
         monkeypatch.setenv(CONFIG_ENV, '/tmp/autre/emplacement.toml')
         assert str(default_config_path()) == '/tmp/autre/emplacement.toml'
+
+
+class TestTokenDiscogs:
+    """Le token active le repli Discogs ; son absence le désactive sans
+    empêcher le ripper de fonctionner."""
+
+    def test_absent_par_defaut(self):
+        config = build_config({'library_path': '/musique'}, {})
+        assert config.discogs_token is None
+
+    def test_lu_depuis_le_fichier(self):
+        config = build_config({'library_path': '/musique',
+                               'discogs_token': 'abc123'}, {})
+        assert config.discogs_token == 'abc123'
+
+    def test_variable_environnement_prioritaire(self, monkeypatch):
+        # Permet de garder le token hors du fichier de configuration.
+        monkeypatch.setenv(DISCOGS_TOKEN_ENV, 'depuis-env')
+        config = build_config({'library_path': '/musique',
+                               'discogs_token': 'depuis-fichier'}, {})
+        assert config.discogs_token == 'depuis-env'
+
+    def test_variable_environnement_seule(self, monkeypatch):
+        monkeypatch.setenv(DISCOGS_TOKEN_ENV, 'depuis-env')
+        config = build_config({'library_path': '/musique'}, {})
+        assert config.discogs_token == 'depuis-env'
+
+    def test_variable_vide_ne_masque_pas_le_fichier(self, monkeypatch):
+        # Une variable exportée vide est un accident courant ; elle ne doit
+        # pas priver l'utilisateur du token qu'il a configuré.
+        monkeypatch.setenv(DISCOGS_TOKEN_ENV, '   ')
+        config = build_config({'library_path': '/musique',
+                               'discogs_token': 'depuis-fichier'}, {})
+        assert config.discogs_token == 'depuis-fichier'
+
+    def test_token_blanc_ramene_a_none(self):
+        config = build_config({'library_path': '/musique',
+                               'discogs_token': '   '}, {})
+        assert config.discogs_token is None

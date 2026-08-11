@@ -47,6 +47,10 @@ class DiscInfo:
     label: str | None = None
     barcode: str | None = None
     musicbrainz_release_id: str | None = None
+    discogs_release_id: int | None = None
+    # Contrairement à Cover Art Archive, dont l'URL se déduit de l'identifiant
+    # de release, Discogs donne l'adresse de l'image dans sa réponse.
+    discogs_cover_url: str | None = None
     disc_number: int = 1
     disc_total: int = 1
     is_compilation: bool = False
@@ -61,16 +65,19 @@ class DiscInfo:
 
     @property
     def cover_url(self) -> str | None:
-        """URL Cover Art Archive de la pochette avant.
+        """URL de la pochette avant, selon la source qui a identifié le disque.
 
         On ne télécharge rien ici : le serveur reconnaît les URL
-        coverartarchive.org et récupère l'image lui-même à la création de
-        l'album (downloadCover, albums.js).
+        coverartarchive.org comme celles de Discogs, et récupère l'image
+        lui-même à la création de l'album (downloadCover, albums.js).
+
+        MusicBrainz passe en premier : son URL est stable et sans quota, là où
+        l'image Discogs est servie derrière un CDN.
         """
-        if not self.musicbrainz_release_id:
-            return None
-        return (f'https://coverartarchive.org/release/'
-                f'{self.musicbrainz_release_id}/front')
+        if self.musicbrainz_release_id:
+            return (f'https://coverartarchive.org/release/'
+                    f'{self.musicbrainz_release_id}/front')
+        return self.discogs_cover_url
 
     def album_artist(self) -> str:
         """L'artiste sous lequel classer l'album.
