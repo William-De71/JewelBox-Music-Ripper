@@ -82,6 +82,29 @@ La mise à jour ne passe pas par le clone local : inutile de faire un `git pull`
 avant, et elle fonctionne même depuis un dossier de dev en cours de
 modification. Ta configuration n'est jamais touchée.
 
+**Une mise à jour ratée ne te laisse pas sans commande.** La nouvelle version
+est d'abord installée à côté de l'ancienne, sous un nom séparé, et doit démarrer
+correctement avant que la bascule ait lieu. Dépôt injoignable, tag inexistant,
+paquet qui ne se construit pas ou refuse de démarrer : dans tous ces cas la
+version en place reste en service et l'installation de contrôle est retirée.
+
+```bash
+$ make update REF=v99.0.0
+Version ciblee : v99.0.0
+Installation de controle...
+fatal : impossible de trouver la référence distante refs/tags/v99.0.0
+
+$ jewelbox-rip --version
+jewelbox-music-ripper 1.2.0     # intacte
+```
+
+Il subsiste une fenêtre étroite, au moment de la bascule elle-même, où la
+commande est absente le temps de la réinstallation — le paquet est alors déjà
+construit et en cache, donc plus rien de distant n'intervient. Si elle échoue
+malgré tout, `make install` remet les choses en place.
+
+Ces mêmes garanties s'appliquent à `make install`.
+
 ```bash
 make uninstall    # retire la commande, conserve la configuration
 ```
