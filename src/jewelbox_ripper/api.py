@@ -2,6 +2,7 @@
 
 Endpoints utilisés (vérifiés dans server/src/routes/, préfixe /api) :
 
+  GET   /api/settings                          → réglages, dont Discogs
   GET   /api/albums/duplicate?title=&artist=   → { duplicate, album }
   POST  /api/albums                            → 201 album | 409 conflit
   PATCH /api/albums/:id                        → mise à jour (is_wanted…)
@@ -150,6 +151,39 @@ class JewelBoxApi:
             return True
         except ApiError:
             return False
+
+    def discogs_credentials(self) -> tuple[str, str] | None:
+        """Identifiants Discogs enregistrés côté serveur, s'ils existent.
+
+        Le serveur expose ses réglages sur /api/settings, dont le couple
+        clé/secret d'application Discogs. Les reprendre évite d'avoir à créer
+        un second jeu d'identifiants pour le ripper.
+
+        Renvoie None dès que le compte n'est pas exploitable — route absente,
+        champs vides, ou serveur muet. L'appelant se rabat alors sur sa propre
+        configuration.
+        """
+        try:
+            settings = self._request('GET', '/api/settings', timeout=5.0)
+        except ApiError:
+            return None
+
+        if not isinstance(settings, dict):
+            return None
+
+        key = str(settings.get('discogs_key') or '').strip()
+        secret = str(settings.get('discogs_secret') or '').strip()
+
+        if not key or not secret:
+            return None
+
+        # Discogs délivre une clé et un secret distincts (24 et 40 caractères).
+        # Deux valeurs identiques trahissent un réglage mal rempli, qui se
+        # ferait refuser en 401 : autant l'ignorer tout de suite.
+        if key == secret:
+            return None
+
+        return key, secret
 
     def find_duplicate(self, title: str, artist: str) -> dict[str, Any] | None:
         """L'album existe-t-il déjà ? Renvoie la fiche serveur, ou None.

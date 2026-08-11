@@ -8,7 +8,8 @@ un disque n'est identifié nulle part.
 
 import pytest
 
-from jewelbox_ripper.cli import _manual_disc, _prompt
+from jewelbox_ripper.cli import _discogs_credentials, _manual_disc, _prompt
+from jewelbox_ripper.config import Config
 
 
 def saisies(monkeypatch, reponses):
@@ -127,3 +128,48 @@ class TestInterruptionParCtrlD:
         assert disc is not None
         assert len(disc.tracks) == 4
         assert all(t.title.startswith('Piste ') for t in disc.tracks)
+
+
+class TestCascadeIdentifiantsDiscogs:
+    """Le serveur d'abord, la configuration locale ensuite : reprendre les
+    identifiants du serveur évite d'en créer un second jeu."""
+
+    class FakeApi:
+        def __init__(self, pair=None):
+            self._pair = pair
+
+        def discogs_credentials(self):
+            return self._pair
+
+    def test_serveur_prioritaire(self):
+        config = Config(library_path='/tmp', discogs_token='jeton-local')
+        creds = _discogs_credentials(config, self.FakeApi(('cle', 'secret')))
+
+        assert creds.key == 'cle'
+        assert creds.token is None
+        assert 'serveur' in creds.source
+
+    def test_repli_sur_le_jeton_local(self):
+        config = Config(library_path='/tmp', discogs_token='jeton-local')
+        creds = _discogs_credentials(config, self.FakeApi(None))
+
+        assert creds.token == 'jeton-local'
+        assert 'ripper' in creds.source
+
+    def test_sans_serveur(self):
+        # Serveur injoignable : l'API n'est pas transmise du tout.
+        config = Config(library_path='/tmp', discogs_token='jeton-local')
+        assert _discogs_credentials(config, None).token == 'jeton-local'
+
+    def test_aucune_source(self):
+        config = Config(library_path='/tmp', discogs_token=None)
+        assert _discogs_credentials(config, self.FakeApi(None)) is None
+
+    def test_sans_configuration(self):
+        assert _discogs_credentials(None, self.FakeApi(None)) is None
+
+    def test_serveur_seul_suffit(self):
+        # Aucun jeton local : les identifiants du serveur font tout le travail.
+        config = Config(library_path='/tmp', discogs_token=None)
+        creds = _discogs_credentials(config, self.FakeApi(('cle', 'secret')))
+        assert creds.valid

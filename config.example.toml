@@ -20,11 +20,14 @@ audio_format = "flac"
 # quality = "8"
 
 # Jeton Discogs, pour le repli quand MusicBrainz ne connaît pas le disque.
-# Facultatif : sans lui, le repli est simplement indisponible et la saisie
-# manuelle prend le relais comme avant.
+#
+# Le plus souvent, rien à mettre ici : si le serveur JewelBox a déjà ses
+# identifiants Discogs dans ses réglages, le ripper les reprend tout seul.
+# Cette ligne ne sert que si le serveur n'en a pas, ou si tu utilises le
+# ripper sans serveur.
+#
 # À créer sur https://www.discogs.com/settings/developers (« Generate token »).
-# La variable d'environnement DISCOGS_TOKEN l'emporte sur cette ligne, si tu
-# préfères garder le jeton hors de ce fichier.
+# La variable d'environnement DISCOGS_TOKEN l'emporte sur cette ligne.
 # discogs_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 
 # Lecteur optique. Laisse commenté pour la détection automatique.

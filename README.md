@@ -105,19 +105,28 @@ MusicBrainz ne connaît pas tous les pressages. Quand le Disc ID n'y donne rien,
 le ripper peut chercher le disque sur Discogs, dont le catalogue est nettement
 plus fourni sur les éditions locales et les rééditions.
 
-Il faut un jeton, la recherche Discogs étant fermée aux requêtes anonymes :
-crée-le sur [discogs.com/settings/developers](https://www.discogs.com/settings/developers)
-(bouton « Generate token »), puis renseigne-le dans ta configuration :
+La recherche Discogs est fermée aux requêtes anonymes, il faut donc des
+identifiants. **Le plus souvent tu n'as rien à faire** : si ton serveur JewelBox
+a déjà les siens (réglages Discogs), le ripper les reprend automatiquement via
+`GET /api/settings`. Inutile d'en créer un second jeu.
+
+Ordre de recherche :
+
+1. les identifiants du serveur (`discogs_key` + `discogs_secret`) ;
+2. la variable d'environnement `DISCOGS_TOKEN` ;
+3. `discogs_token` dans la configuration du ripper.
+
+Pour les cas restants — serveur sans identifiants, ou ripper utilisé seul —
+crée un jeton personnel sur
+[discogs.com/settings/developers](https://www.discogs.com/settings/developers)
+(bouton « Generate token »), puis :
 
 ```toml
 discogs_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
-La variable d'environnement `DISCOGS_TOKEN` l'emporte sur le fichier, si tu
-préfères garder le jeton hors de `~/.config`.
-
-Sans jeton, rien ne casse : le repli s'annonce indisponible et la saisie
-manuelle prend le relais, exactement comme avant.
+Sans aucun identifiant, rien ne casse : le repli s'annonce indisponible et la
+saisie manuelle prend le relais, exactement comme avant.
 
 **À savoir** : Discogs n'indexe pas les Disc ID — les identifiants calculés
 depuis la table des matières d'un CD ne sont pas dans sa base, et aucune route
