@@ -76,14 +76,23 @@ jobs:
 
             Dépendances système (Fedora) :
             ```bash
-            sudo dnf install cdparanoia flac python3-mutagen python3-discid \
-                             python3-musicbrainzngs
+            sudo dnf install cdparanoia flac libdiscid pipx
             sudo dnf install opus-tools lame   # formats optionnels
             ```
 
-            Puis le paquet, depuis le wheel joint à cette release :
+            Puis la commande, dans un environnement isolé :
             ```bash
-            pip install --user jewelbox_music_ripper-*-py3-none-any.whl
+            pipx ensurepath   # une seule fois
+            pipx install "git+https://github.com/William-De71/JewelBox-Music-Ripper.git@${{ github.ref_name }}"
+            ```
+
+            Le wheel joint à cette release reste utilisable si tu préfères
+            l'installer hors ligne : `pipx install ./jewelbox_music_ripper-*.whl`.
+
+            Déjà installé ? Une mise à jour suffit — `make update` va
+            chercher tout seul la dernière version publiée :
+            ```bash
+            make update
             ```
 
             ### Premier lancement
