@@ -40,21 +40,49 @@ interruption ne laisse aucun album à moitié écrit dans la bibliothèque.
 Dépendances système (Fedora) :
 
 ```bash
-sudo dnf install cdparanoia flac python3-mutagen python3-discid \
-                 python3-musicbrainzngs
+sudo dnf install cdparanoia flac libdiscid pipx
 # formats optionnels
 sudo dnf install opus-tools lame
 ```
 
+`libdiscid` est la bibliothèque C que lit le module `discid` ; sans elle, le
+Disc ID ne peut pas être calculé. Les modules Python eux-mêmes n'ont pas à être
+installés : ils sont embarqués dans l'environnement de la commande.
+
 Puis, une fois pour toutes :
 
 ```bash
-make install    # installe la commande « jewelbox-rip »
-make config     # crée ta configuration depuis l'exemple
+pipx ensurepath   # une seule fois : met ~/.local/bin dans le PATH
+make install      # installe la commande « jewelbox-rip »
+make config       # crée ta configuration depuis l'exemple
 ```
 
-`make install` pose `jewelbox-rip` dans `~/.local/bin` en mode éditable : les
-modifications du code sont prises en compte sans réinstaller.
+`make install` confie l'installation à `pipx`, qui **copie** le code dans un
+environnement virtuel dédié (`~/.local/share/pipx/venvs/`) et pose le lanceur
+dans `~/.local/bin`. La commande installée est donc indépendante de ce dossier :
+le déplacer, changer de branche, éditer un fichier ou lancer `make clean`
+n'affecte en rien `jewelbox-rip`. Les dépendances restent isolées, sans se
+mélanger aux autres paquets Python de ta session.
+
+### Mise à jour
+
+```bash
+make update              # dernière version publiée
+make update REF=v1.0.0   # une version précise, ou pour revenir en arrière
+```
+
+`make update` détermine tout seul le dernier tag `vX.Y.Z` du dépôt distant et
+l'installe. **Seules les versions publiées sont installées** : du code poussé sur
+`main` mais pas encore tagué n'arrive jamais par cette voie, la commande dont tu
+te sers pour ripper reste donc sur du versionné.
+
+La mise à jour ne passe pas par le clone local : inutile de faire un `git pull`
+avant, et elle fonctionne même depuis un dossier de dev en cours de
+modification. Ta configuration n'est jamais touchée.
+
+```bash
+make uninstall    # retire la commande, conserve la configuration
+```
 
 ## Configuration
 
@@ -91,10 +119,19 @@ Options utiles : `--library`, `--server`, `--device`, `--no-scan`, `--no-eject`.
 Commence par `--dry-run` sur un disque : il affiche l'arborescence qui serait
 produite et l'état de l'album dans la collection, sans rien modifier.
 
-### Sans installer
+### Depuis les sources, pendant le développement
 
-`make dry-run` et `make rip` lancent l'outil depuis les sources, sans passer par
-`make install`.
+`make dry-run` et `make rip` exécutent le code de ce dossier tel quel, sans rien
+installer :
+
+```bash
+make dry-run    # identifie le CD insere, n'ecrit rien
+make rip        # extrait le CD insere
+```
+
+C'est la voie à suivre pour essayer une modification : la commande `jewelbox-rip`
+installée reste sur sa version, donc un code en cours d'édition ne peut pas
+casser l'outil dont tu te sers pour ripper.
 
 ## Choix techniques
 
