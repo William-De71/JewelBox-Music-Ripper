@@ -278,3 +278,75 @@ class TestErrorPayload:
 
         # Faute de message serveur, on retombe sur la raison HTTP.
         assert 'Conflict' in str(excinfo.value)
+
+
+class TestIdentifiantsDiscogs:
+    """Le serveur enregistre déjà un couple clé/secret Discogs : le reprendre
+    évite d'avoir à en créer un second pour le ripper."""
+
+    def test_couple_valide(self, api, monkeypatch):
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: FakeResponse({
+                                'music_library_path': '/music',
+                                'discogs_key': 'cle-application',
+                                'discogs_secret': 'secret-application',
+                            }))
+        assert api.discogs_credentials() == ('cle-application',
+                                             'secret-application')
+
+    def test_champs_absents(self, api, monkeypatch):
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: FakeResponse(
+                                {'music_library_path': '/music'}))
+        assert api.discogs_credentials() is None
+
+    @pytest.mark.parametrize('cle, secret', [
+        ('', 'secret'),
+        ('cle', ''),
+        ('   ', 'secret'),
+        (None, 'secret'),
+    ])
+    def test_champs_vides(self, api, monkeypatch, cle, secret):
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: FakeResponse(
+                                {'discogs_key': cle, 'discogs_secret': secret}))
+        assert api.discogs_credentials() is None
+
+    def test_cle_egale_au_secret_ignoree(self, api, monkeypatch):
+        # Discogs délivre une clé et un secret distincts. Deux valeurs
+        # identiques trahissent un réglage mal rempli, qui serait refusé en
+        # 401 : autant l'écarter avant de partir sur le réseau.
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: FakeResponse(
+                                {'discogs_key': 'pareil',
+                                 'discogs_secret': 'pareil'}))
+        assert api.discogs_credentials() is None
+
+    def test_espaces_retires(self, api, monkeypatch):
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: FakeResponse(
+                                {'discogs_key': '  cle  ',
+                                 'discogs_secret': ' secret '}))
+        assert api.discogs_credentials() == ('cle', 'secret')
+
+    def test_route_absente(self, api, monkeypatch):
+        # Un serveur plus ancien n'expose pas /api/settings : le ripper doit
+        # se rabattre sur sa configuration, pas échouer.
+        def absente(request, timeout=None):
+            raise urllib.error.HTTPError(request.full_url, 404, 'Not Found',
+                                         {}, BytesIO(b''))
+
+        monkeypatch.setattr('urllib.request.urlopen', absente)
+        assert api.discogs_credentials() is None
+
+    def test_serveur_injoignable(self, api, monkeypatch):
+        def coupe(request, timeout=None):
+            raise urllib.error.URLError('injoignable')
+
+        monkeypatch.setattr('urllib.request.urlopen', coupe)
+        assert api.discogs_credentials() is None
+
+    def test_reponse_inattendue(self, api, monkeypatch):
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: FakeResponse(['liste']))
+        assert api.discogs_credentials() is None

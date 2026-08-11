@@ -84,13 +84,47 @@ class DiscogsRelease:
         return ' '.join(bits)
 
 
+@dataclass
+class DiscogsCredentials:
+    """De quoi s'authentifier auprès de Discogs, sous l'une des deux formes.
+
+    Discogs accepte un jeton personnel (« Generate token », le plus simple) ou
+    un couple clé/secret issu de l'enregistrement d'une application. Le serveur
+    JewelBox stocke la seconde forme dans ses réglages, d'où la prise en charge
+    des deux.
+
+    `source` sert uniquement aux messages : savoir d'où vient un identifiant
+    refusé évite de chercher au mauvais endroit.
+    """
+
+    token: str | None = None
+    key: str | None = None
+    secret: str | None = None
+    source: str = 'configuration'
+
+    @property
+    def valid(self) -> bool:
+        return bool(self.token) or bool(self.key and self.secret)
+
+    def header(self) -> str:
+        if self.token:
+            return f'Discogs token={self.token}'
+        return f'Discogs key={self.key}, secret={self.secret}'
+
+
 class DiscogsClient:
     """Accès en lecture à la base Discogs."""
 
-    def __init__(self, token: str, *, timeout: float = DEFAULT_TIMEOUT) -> None:
-        if not token:
-            raise DiscogsAuthError('Token Discogs absent.')
-        self.token = token
+    def __init__(self, credentials: DiscogsCredentials | str, *,
+                 timeout: float = DEFAULT_TIMEOUT) -> None:
+        # Une simple chaîne reste acceptée : c'est un jeton personnel.
+        if isinstance(credentials, str):
+            credentials = DiscogsCredentials(token=credentials)
+
+        if not credentials.valid:
+            raise DiscogsAuthError('Identifiants Discogs absents.')
+
+        self.credentials = credentials
         self.timeout = timeout
 
     # -- transport ---------------------------------------------------------
@@ -103,8 +137,7 @@ class DiscogsClient:
         request = urllib.request.Request(url, headers={
             'Accept': 'application/json',
             'User-Agent': USER_AGENT,
-            # Forme attendue par Discogs Auth pour un jeton personnel.
-            'Authorization': f'Discogs token={self.token}',
+            'Authorization': self.credentials.header(),
         })
 
         try:
@@ -115,9 +148,10 @@ class DiscogsClient:
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise DiscogsAuthError(
-                    'Token Discogs refusé. Vérifie « discogs_token » dans ta '
-                    'configuration, ou la variable DISCOGS_TOKEN.\n'
-                    'Un jeton se crée sur https://www.discogs.com/settings/developers'
+                    f'Identifiants Discogs refusés ({self.credentials.source}).\n'
+                    'Un jeton personnel se crée sur '
+                    'https://www.discogs.com/settings/developers, à mettre dans '
+                    '« discogs_token » ou dans la variable DISCOGS_TOKEN.'
                 ) from exc
             if exc.code == 429:
                 raise DiscogsError(

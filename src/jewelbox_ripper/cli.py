@@ -25,6 +25,7 @@ from .config import Config, ConfigError, build_config, default_config_path, load
 from .disc import DiscInfo, TrackInfo, format_duration
 from .discogs import (
     DiscogsClient,
+    DiscogsCredentials,
     DiscogsError,
     DiscogsRelease,
 )
@@ -148,8 +149,10 @@ def _run(args: argparse.Namespace, config: Config) -> int:
         _warn(str(exc))
         candidates = []
 
+    # L'API n'est transmise que si le serveur répond : inutile d'attendre un
+    # nouveau délai d'expiration pour lui réclamer ses identifiants Discogs.
     disc = _choose_disc(candidates, disc_id, track_count, assume_yes=args.yes,
-                        config=config)
+                        config=config, api=api if server_ok else None)
     if disc is None:
         _warn('Abandon : disque non identifié.')
         return 3
@@ -208,14 +211,15 @@ def _run(args: argparse.Namespace, config: Config) -> int:
 
 def _choose_disc(candidates: list[ReleaseCandidate], disc_id: str,
                  track_count: int, *, assume_yes: bool,
-                 config: Config | None = None) -> DiscInfo | None:
+                 config: Config | None = None,
+                 api: JewelBoxApi | None = None) -> DiscInfo | None:
     """Choisit l'édition, avec repli sur Discogs puis sur la saisie manuelle."""
     if not candidates:
         _warn('Disque inconnu de MusicBrainz.')
         if assume_yes:
             return None
 
-        disc = _discogs_fallback(track_count, config)
+        disc = _discogs_fallback(track_count, config, api)
         if disc is not None:
             return disc
 
@@ -268,17 +272,41 @@ def _prompt(label: str) -> str:
         return ''
 
 
-def _discogs_fallback(track_count: int,
-                      config: Config | None) -> DiscInfo | None:
+def _discogs_credentials(config: Config | None,
+                         api: JewelBoxApi | None) -> DiscogsCredentials | None:
+    """Trouve de quoi s'authentifier, du serveur d'abord puis du local.
+
+    Le serveur JewelBox enregistre déjà un couple clé/secret Discogs dans ses
+    réglages : le reprendre évite d'avoir à créer un second jeu d'identifiants
+    pour le ripper. S'il est absent ou mal rempli, on retombe sur le jeton
+    personnel de la configuration locale.
+    """
+    if api is not None:
+        pair = api.discogs_credentials()
+        if pair:
+            key, secret = pair
+            return DiscogsCredentials(key=key, secret=secret,
+                                      source='réglages du serveur')
+
+    token = config.discogs_token if config else None
+    if token:
+        return DiscogsCredentials(token=token,
+                                  source='configuration du ripper')
+
+    return None
+
+
+def _discogs_fallback(track_count: int, config: Config | None,
+                      api: JewelBoxApi | None = None) -> DiscInfo | None:
     """Cherche le disque sur Discogs. Renvoie None pour passer au manuel.
 
     Discogs n'indexe pas les Disc ID : impossible de retrouver le disque
     automatiquement, la recherche part donc de termes saisis à la main. On y
     gagne malgré tout la tracklist complète plutôt que douze titres à retaper.
     """
-    token = config.discogs_token if config else None
-    if not token:
-        _info('Recherche Discogs indisponible : aucun token configuré.')
+    credentials = _discogs_credentials(config, api)
+    if credentials is None:
+        _info('Recherche Discogs indisponible : aucun identifiant.')
         _info('  Pour l\'activer, crée un jeton sur '
               'https://www.discogs.com/settings/developers')
         _info('  puis renseigne « discogs_token » dans ta configuration '
@@ -289,7 +317,7 @@ def _discogs_fallback(track_count: int,
         return None
 
     try:
-        client = DiscogsClient(token)
+        client = DiscogsClient(credentials)
     except DiscogsError as exc:
         _warn(str(exc))
         return None

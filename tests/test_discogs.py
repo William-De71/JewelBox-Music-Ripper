@@ -12,6 +12,7 @@ from io import BytesIO
 import pytest
 
 from jewelbox_ripper.discogs import (
+    DiscogsCredentials,
     MAX_RESULTS,
     DiscogsAuthError,
     DiscogsClient,
@@ -498,3 +499,62 @@ class TestCompilations:
 
     def test_album_normal_pas_compilation(self):
         assert not build_disc_info(NEVERMIND).is_compilation
+
+
+class TestIdentifiants:
+    """Discogs accepte un jeton personnel ou un couple clé/secret ; le serveur
+    JewelBox stocke la seconde forme, d'où la prise en charge des deux."""
+
+    def test_entete_jeton_personnel(self):
+        creds = DiscogsCredentials(token='abc')
+        assert creds.header() == 'Discogs token=abc'
+
+    def test_entete_cle_secret(self):
+        creds = DiscogsCredentials(key='k', secret='s')
+        assert creds.header() == 'Discogs key=k, secret=s'
+
+    def test_jeton_prioritaire_sur_le_couple(self):
+        creds = DiscogsCredentials(token='abc', key='k', secret='s')
+        assert creds.header() == 'Discogs token=abc'
+
+    @pytest.mark.parametrize('creds, attendu', [
+        (DiscogsCredentials(token='abc'), True),
+        (DiscogsCredentials(key='k', secret='s'), True),
+        (DiscogsCredentials(), False),
+        (DiscogsCredentials(key='k'), False),      # secret manquant
+        (DiscogsCredentials(secret='s'), False),   # clé manquante
+    ])
+    def test_validite(self, creds, attendu):
+        assert creds.valid is attendu
+
+    def test_client_refuse_des_identifiants_vides(self):
+        with pytest.raises(DiscogsAuthError):
+            DiscogsClient(DiscogsCredentials())
+
+    def test_client_accepte_une_chaine(self):
+        # Rétrocompatibilité : une chaîne nue reste un jeton personnel.
+        client = DiscogsClient('mon-jeton')
+        assert client.credentials.token == 'mon-jeton'
+
+    def test_couple_transmis_dans_l_entete(self, monkeypatch):
+        captured = {}
+
+        def fake_urlopen(request, timeout=None):
+            captured['auth'] = request.headers['Authorization']
+            return FakeResponse({'results': []})
+
+        monkeypatch.setattr('urllib.request.urlopen', fake_urlopen)
+        DiscogsClient(DiscogsCredentials(key='ma-cle',
+                                         secret='mon-secret')).search('A', 'B')
+        assert captured['auth'] == 'Discogs key=ma-cle, secret=mon-secret'
+
+    def test_origine_citee_dans_l_erreur(self, monkeypatch):
+        # Savoir d'où vient un identifiant refusé évite de le chercher au
+        # mauvais endroit.
+        monkeypatch.setattr('urllib.request.urlopen',
+                            lambda r, timeout=None: (_ for _ in ()).throw(http_error(401)))
+
+        client = DiscogsClient(DiscogsCredentials(key='k', secret='s',
+                                                  source='réglages du serveur'))
+        with pytest.raises(DiscogsAuthError, match='réglages du serveur'):
+            client.search('A', 'B')
