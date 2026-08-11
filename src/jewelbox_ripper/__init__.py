@@ -1,3 +1,3 @@
 """Extraction de CD audio vers une bibliothèque JewelBox Music."""
 
-__version__ = '1.0.1'
+__version__ = '1.1.0'
