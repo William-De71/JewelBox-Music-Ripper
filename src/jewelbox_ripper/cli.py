@@ -238,25 +238,43 @@ def _choose_disc(candidates: list[ReleaseCandidate], disc_id: str,
     return disc
 
 
+def _prompt(label: str) -> str:
+    """Lit une réponse. Ctrl+D et fin de flux valent une entrée vide.
+
+    Sans ça, un Ctrl+D pendant la saisie ferait remonter une EOFError jusqu'au
+    sommet et afficherait une trace Python. L'appelant traite la chaîne vide
+    comme il l'entend : annulation sur un champ requis, valeur par défaut
+    ailleurs — c'est exactement ce que fait déjà la touche Entrée.
+    """
+    try:
+        return input(label).strip()
+    except EOFError:
+        # Le curseur reste sur la ligne du prompt abandonné.
+        print()
+        return ''
+
+
 def _manual_disc(track_count: int) -> DiscInfo | None:
     """Saisie manuelle, pour les pressages absents de MusicBrainz."""
     print('\nSaisie manuelle (Entrée pour annuler) :')
-    artist = input('  Artiste : ').strip()
+    artist = _prompt('  Artiste : ')
     if not artist:
         return None
-    album = input('  Album   : ').strip()
+    album = _prompt('  Album   : ')
     if not album:
         return None
 
-    year_raw = input('  Année (facultatif) : ').strip()
+    year_raw = _prompt('  Année (facultatif) : ')
     year = int(year_raw) if year_raw.isdigit() else None
-    genre = input('  Genre (facultatif) : ').strip() or None
+    genre = _prompt('  Genre (facultatif) : ') or None
 
     print(f'\n  Titres des {track_count} pistes '
           '(Entrée pour « Piste N ») :')
     tracks: list[TrackInfo] = []
     for number in range(1, track_count + 1):
-        title = input(f'    {number:2d}. ').strip() or f'Piste {number}'
+        # Artiste et album sont déjà saisis : un Ctrl+D ici valide les titres
+        # restants en « Piste N » plutôt que de tout jeter.
+        title = _prompt(f'    {number:2d}. ') or f'Piste {number}'
         tracks.append(TrackInfo(number=number, title=title))
 
     return DiscInfo(artist=artist, album=album, tracks=tracks,
