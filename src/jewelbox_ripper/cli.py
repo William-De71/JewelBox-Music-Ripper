@@ -3,7 +3,8 @@
 Déroulé d'une exécution :
 
   1. lire le Disc ID du CD inséré ;
-  2. interroger MusicBrainz, faire choisir l'édition (ou saisir à la main) ;
+  2. interroger MusicBrainz, faire choisir l'édition — à défaut, chercher sur
+     Discogs, puis en dernier recours saisir à la main ;
   3. vérifier la présence de l'album dans la collection JewelBox ;
      - absent  → proposer de le créer via l'API ;
      - présent et « souhaité » → proposer de le marquer possédé ;
@@ -22,6 +23,12 @@ from . import __version__
 from .api import AlbumConflict, AlbumPayload, ApiError, JewelBoxApi, TrackPayload
 from .config import Config, ConfigError, build_config, default_config_path, load_config
 from .disc import DiscInfo, TrackInfo, format_duration
+from .discogs import (
+    DiscogsClient,
+    DiscogsError,
+    DiscogsRelease,
+)
+from .discogs import build_disc_info as build_discogs_disc_info
 from .identify import (
     DiscReadError,
     IdentificationError,
@@ -141,7 +148,8 @@ def _run(args: argparse.Namespace, config: Config) -> int:
         _warn(str(exc))
         candidates = []
 
-    disc = _choose_disc(candidates, disc_id, track_count, assume_yes=args.yes)
+    disc = _choose_disc(candidates, disc_id, track_count, assume_yes=args.yes,
+                        config=config)
     if disc is None:
         _warn('Abandon : disque non identifié.')
         return 3
@@ -199,12 +207,18 @@ def _run(args: argparse.Namespace, config: Config) -> int:
 
 
 def _choose_disc(candidates: list[ReleaseCandidate], disc_id: str,
-                 track_count: int, *, assume_yes: bool) -> DiscInfo | None:
-    """Choisit l'édition, ou bascule sur une saisie manuelle."""
+                 track_count: int, *, assume_yes: bool,
+                 config: Config | None = None) -> DiscInfo | None:
+    """Choisit l'édition, avec repli sur Discogs puis sur la saisie manuelle."""
     if not candidates:
         _warn('Disque inconnu de MusicBrainz.')
         if assume_yes:
             return None
+
+        disc = _discogs_fallback(track_count, config)
+        if disc is not None:
+            return disc
+
         if not _confirm('Saisir les informations à la main ?', default=True,
                         assume_yes=False):
             return None
@@ -252,6 +266,92 @@ def _prompt(label: str) -> str:
         # Le curseur reste sur la ligne du prompt abandonné.
         print()
         return ''
+
+
+def _discogs_fallback(track_count: int,
+                      config: Config | None) -> DiscInfo | None:
+    """Cherche le disque sur Discogs. Renvoie None pour passer au manuel.
+
+    Discogs n'indexe pas les Disc ID : impossible de retrouver le disque
+    automatiquement, la recherche part donc de termes saisis à la main. On y
+    gagne malgré tout la tracklist complète plutôt que douze titres à retaper.
+    """
+    token = config.discogs_token if config else None
+    if not token:
+        _info('Recherche Discogs indisponible : aucun token configuré.')
+        _info('  Pour l\'activer, crée un jeton sur '
+              'https://www.discogs.com/settings/developers')
+        _info('  puis renseigne « discogs_token » dans ta configuration '
+              '(ou la variable DISCOGS_TOKEN).')
+        return None
+
+    if not _confirm('Chercher sur Discogs ?', default=True, assume_yes=False):
+        return None
+
+    try:
+        client = DiscogsClient(token)
+    except DiscogsError as exc:
+        _warn(str(exc))
+        return None
+
+    print('\nRecherche Discogs (Entrée pour passer à la saisie manuelle) :')
+    artist = _prompt('  Artiste : ')
+    album = _prompt('  Album   : ')
+
+    if not artist and not album:
+        return None
+
+    try:
+        releases = client.search(artist, album, track_count=track_count)
+    except DiscogsError as exc:
+        _warn(str(exc))
+        return None
+
+    if not releases:
+        _warn('Aucun résultat sur Discogs.')
+        return None
+
+    chosen = _choose_release(releases, track_count)
+    if chosen is None:
+        return None
+
+    try:
+        detail = client.fetch_tracklist(chosen.release_id)
+    except DiscogsError as exc:
+        _warn(f'Tracklist illisible : {exc}')
+        return None
+
+    disc = build_discogs_disc_info(detail, fallback_track_count=track_count)
+
+    if not disc.tracks:
+        _warn('Cette release ne déclare aucune piste sur Discogs.')
+        return None
+
+    if len(disc.tracks) != track_count:
+        _warn(f'Le disque contient {track_count} pistes, mais cette édition '
+              f'en déclare {len(disc.tracks)}.')
+        if not _confirm('Utiliser quand même ces métadonnées ?', default=False,
+                        assume_yes=False):
+            return None
+
+    _info(f'Retenu depuis Discogs : {disc.artist} — {disc.album}')
+    return disc
+
+
+def _choose_release(releases: list[DiscogsRelease],
+                    track_count: int) -> DiscogsRelease | None:
+    """Affiche les releases Discogs et fait choisir."""
+    _info(f'{len(releases)} release(s) trouvée(s) sur Discogs :')
+    for index, release in enumerate(releases, start=1):
+        # Le repère signale les éditions dont le nombre de pistes correspond
+        # au disque inséré : ce sont les candidates les plus probables.
+        marker = ' ←' if release.track_count == track_count else ''
+        print(f'  {index:2d}. {release.summary()}{marker}')
+
+    choice = _ask_index('Quelle édition ?', len(releases))
+    if choice is None:
+        return None
+    return releases[choice]
 
 
 def _manual_disc(track_count: int) -> DiscInfo | None:

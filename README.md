@@ -3,9 +3,10 @@
 Extraction de CD audio vers une bibliothèque
 [JewelBox Music Library](https://github.com/William-De71/jewelbox-music-library).
 
-Insère un CD, lance `jewelbox-rip` : le disque est identifié via MusicBrainz,
-ajouté à ta collection s'il en est absent, extrait en FLAC (ou Opus/MP3), tagué
-et déposé dans la bibliothèque du serveur, qui l'apparie ensuite tout seul.
+Insère un CD, lance `jewelbox-rip` : le disque est identifié via MusicBrainz
+(avec repli sur Discogs), ajouté à ta collection s'il en est absent, extrait en
+FLAC (ou Opus/MP3), tagué et déposé dans la bibliothèque du serveur, qui
+l'apparie ensuite tout seul.
 
 ## Comment ça s'articule avec le serveur
 
@@ -20,6 +21,7 @@ l'extraction ne servirait à rien.
 
 ```
 CD → Disc ID → MusicBrainz → confirmation
+  └── inconnu → Discogs (recherche par artiste/album) → saisie manuelle
   ↓
 GET /api/albums/duplicate
   ├── présent → propose de lever « souhaité » le cas échéant
@@ -69,6 +71,53 @@ library_path = "/mnt/musique"
 Ce doit être le dossier scanné par le serveur. Il n'est pas devinable : le
 serveur range ce chemin en base et ne l'expose par aucune route.
 
+### Repli Discogs (facultatif)
+
+MusicBrainz ne connaît pas tous les pressages. Quand le Disc ID n'y donne rien,
+le ripper peut chercher le disque sur Discogs, dont le catalogue est nettement
+plus fourni sur les éditions locales et les rééditions.
+
+Il faut un jeton, la recherche Discogs étant fermée aux requêtes anonymes :
+crée-le sur [discogs.com/settings/developers](https://www.discogs.com/settings/developers)
+(bouton « Generate token »), puis renseigne-le dans ta configuration :
+
+```toml
+discogs_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+La variable d'environnement `DISCOGS_TOKEN` l'emporte sur le fichier, si tu
+préfères garder le jeton hors de `~/.config`.
+
+Sans jeton, rien ne casse : le repli s'annonce indisponible et la saisie
+manuelle prend le relais, exactement comme avant.
+
+**À savoir** : Discogs n'indexe pas les Disc ID — les identifiants calculés
+depuis la table des matières d'un CD ne sont pas dans sa base, et aucune route
+ne permet de les interroger. Le disque ne peut donc pas y être reconnu tout
+seul : le ripper te demande l'artiste et l'album, puis affiche les éditions
+trouvées. Tu tapes deux mots au lieu de retaper douze titres.
+
+```
+! Disque inconnu de MusicBrainz.
+Chercher sur Discogs ? [O/n] o
+
+  Artiste : nirvana
+  Album   : nevermind
+
+  4 release(s) trouvée(s) sur Discogs :
+   1. Nirvana — Nevermind (1991, DGC, US, DGCD-24425) [CD, Album] · 12 pistes ←
+   2. Nirvana — Nevermind (1991, Geffen, EU) [CD, Album] · 12 pistes ←
+   3. Nirvana — Nevermind (2011, DGC, US) [CD, Album, Reissue] · 13 pistes
+   4. Nirvana — Nevermind (1991, Sub Pop, JP) [Vinyl, LP] · 12 pistes ←
+
+Quelle édition ? [1-4, Entrée pour annuler]
+```
+
+La flèche marque les éditions dont le nombre de pistes correspond au disque
+inséré, et ces éditions sont remontées en tête de liste : ce sont les
+candidates les plus probables. Si la tracklist retenue ne colle pas au disque,
+le ripper le signale et demande confirmation avant de continuer.
+
 ## Utilisation
 
 Une fois configuré, tout tient en une commande :
@@ -113,8 +162,17 @@ les noms de fichiers. Seuls les caractères réellement problématiques (`/`, `:
 contrôles) sont remplacés.
 
 **Pochette déléguée au serveur.** Le ripper transmet l'URL Cover Art Archive de
-la release ; `POST /api/albums` reconnaît ce domaine et télécharge l'image
-lui-même. Rien à stocker côté ripper.
+la release — ou celle de Discogs quand le disque vient de là ; `POST /api/albums`
+reconnaît les deux domaines et télécharge l'image lui-même. Rien à stocker côté
+ripper.
+
+**Discogs en second recours seulement.** MusicBrainz reste la source
+principale : son Disc ID identifie le pressage exact sans rien demander à
+personne. Discogs n'a pas cet équivalent, sa recherche part de termes saisis à
+la main, donc il n'intervient que lorsque le Disc ID ne donne rien. Les
+positions de pistes y étant des chaînes libres (« A1 », « 2-3 »), la
+numérotation est reconstruite séquentiellement : c'est l'ordre physique du
+disque que suit cdparanoia.
 
 **Compilations.** Détectées par l'artiste (`Various Artists`) ou l'hétérogénéité
 des pistes, elles sont classées sous « Artistes divers » avec l'artiste réel

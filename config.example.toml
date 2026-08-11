@@ -19,6 +19,14 @@ audio_format = "flac"
 #   mp3  : 0 à 9   (0 = meilleure qualité)
 # quality = "8"
 
+# Jeton Discogs, pour le repli quand MusicBrainz ne connaît pas le disque.
+# Facultatif : sans lui, le repli est simplement indisponible et la saisie
+# manuelle prend le relais comme avant.
+# À créer sur https://www.discogs.com/settings/developers (« Generate token »).
+# La variable d'environnement DISCOGS_TOKEN l'emporte sur cette ligne, si tu
+# préfères garder le jeton hors de ce fichier.
+# discogs_token = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
 # Lecteur optique. Laisse commenté pour la détection automatique.
 # device = "/dev/sr0"
 

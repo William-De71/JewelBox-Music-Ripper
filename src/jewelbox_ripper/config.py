@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CONFIG_ENV = 'JEWELBOX_RIPPER_CONFIG'
+DISCOGS_TOKEN_ENV = 'DISCOGS_TOKEN'
 DEFAULT_SERVER = 'http://localhost:3001'
 DEFAULT_FORMAT = 'flac'
 
@@ -40,6 +41,8 @@ class Config:
     quality: str | None = None
     device: str | None = None
     paranoia: bool = True
+    # Facultatif : sans lui, le repli Discogs est simplement indisponible.
+    discogs_token: str | None = None
 
     def validate(self) -> None:
         """Vérifie la bibliothèque avant d'extraire quoi que ce soit.
@@ -105,6 +108,12 @@ def build_config(file_data: dict, overrides: dict) -> Config:
 
     paranoia = pick('paranoia', True)
 
+    # La variable d'environnement l'emporte sur le fichier : elle permet de
+    # garder le token hors du dossier de configuration. Une variable vide ou
+    # réduite à des espaces ne doit pas masquer le token du fichier.
+    token = (os.environ.get(DISCOGS_TOKEN_ENV) or '').strip() \
+        or pick('discogs_token')
+
     return Config(
         library_path=Path(str(library)).expanduser(),
         server_url=str(pick('server_url', DEFAULT_SERVER)).rstrip('/'),
@@ -112,4 +121,5 @@ def build_config(file_data: dict, overrides: dict) -> Config:
         quality=(str(pick('quality')) if pick('quality') is not None else None),
         device=(str(pick('device')) if pick('device') else None),
         paranoia=bool(paranoia),
+        discogs_token=(str(token).strip() or None) if token else None,
     )
