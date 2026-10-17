@@ -45,6 +45,8 @@ Dépendances système (Fedora) :
 sudo dnf install cdparanoia flac libdiscid pipx
 # formats optionnels
 sudo dnf install opus-tools lame
+# normalisation du volume (tags ReplayGain), recommandé
+sudo dnf install rsgain
 ```
 
 `libdiscid` est la bibliothèque C que lit le module `discid` ; sans elle, le
@@ -219,6 +221,14 @@ casser l'outil dont tu te sers pour ripper.
 **Correction d'erreurs par défaut.** `cdparanoia` relit les secteurs douteux
 plutôt que d'accepter des clics. C'est plus lent, et c'est l'intérêt pour de
 l'archivage — `--fast` désactive ce comportement.
+
+**Volume normalisé.** Après l'encodage, `rsgain` mesure le volume perçu
+(EBU R128) et écrit les tags ReplayGain de chaque piste et de l'album, avant
+publication. Le lecteur JewelBox les applique (Préférences → Lecture), pour
+que tous les disques sonnent au même niveau. Seuls des tags sont ajoutés :
+l'audio n'est jamais modifié. Sans `rsgain`, l'étape est sautée avec un
+avertissement ; `--no-replaygain` (ou `replaygain = false`) la désactive.
+Pour une bibliothèque déjà rippée : `rsgain easy /chemin/de/la/bibliotheque`.
 
 **Nommage aligné sur le scanner.** Les fichiers suivent
 `Artiste/Album/01 - Titre.flac`, exactement ce que le repli `parsePathFallback()`

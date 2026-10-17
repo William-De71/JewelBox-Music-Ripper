@@ -36,3 +36,10 @@ audio_format = "flac"
 # Correction d'erreurs de lecture. true (défaut) relit les secteurs douteux :
 # plus lent, mais c'est tout l'intérêt pour de l'archivage.
 # paranoia = true
+
+# Normalisation du volume. true (défaut) calcule les tags ReplayGain de
+# chaque piste et de l'album après l'encodage, avec rsgain
+# (sudo dnf install rsgain) ; le lecteur JewelBox les applique pour que tous
+# les disques sonnent au même niveau. Sans rsgain, l'étape est simplement
+# sautée. Les données audio ne sont jamais modifiées, seuls des tags s'ajoutent.
+# replaygain = true

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .config import Config
 from .disc import DiscInfo
+from .loudness import ReplayGainResult, apply_replaygain
 from .naming import album_relpath, track_filename
 from .ripper import EncoderSpec, rip_and_encode
 from .tagging import tag_file
@@ -35,6 +36,8 @@ class RipResult:
     album_dir: Path
     files: list[Path] = field(default_factory=list)
     failed: list[tuple[int, str]] = field(default_factory=list)
+    # None : étape désactivée (replaygain = false).
+    replaygain: ReplayGainResult | None = None
 
     @property
     def ok(self) -> bool:
@@ -114,6 +117,13 @@ def rip_disc(disc: DiscInfo, config: Config, spec: EncoderSpec, *,
                     'Aucune piste n\'a pu être extraite. Vérifie le disque et '
                     'le lecteur.'
                 )
+
+            # Avant la publication : le serveur ne voit l'album qu'une fois
+            # tagué en entier. Un échec ici n'empêche pas de publier.
+            if config.replaygain:
+                if progress:
+                    progress(total, total, 'Calcul du volume (ReplayGain)')
+                result.replaygain = apply_replaygain(staged_files)
 
             if progress:
                 progress(total, total, 'Publication dans la bibliothèque')

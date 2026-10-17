@@ -8,6 +8,7 @@ import pytest
 
 from jewelbox_ripper.config import Config
 from jewelbox_ripper.disc import DiscInfo, TrackInfo
+from jewelbox_ripper.loudness import ReplayGainResult
 from jewelbox_ripper.pipeline import PipelineError, plan_paths, rip_disc
 from jewelbox_ripper.ripper import ENCODERS
 
@@ -72,6 +73,15 @@ def _fake_rip(monkeypatch, *, failing_tracks=()):
     monkeypatch.setattr('jewelbox_ripper.pipeline.rip_and_encode', fake)
     monkeypatch.setattr('jewelbox_ripper.pipeline.tag_file',
                         lambda path, disc, track: None)
+    calls = []
+
+    def fake_replaygain(files):
+        calls.append(list(files))
+        return ReplayGainResult(True)
+
+    monkeypatch.setattr('jewelbox_ripper.pipeline.apply_replaygain',
+                        fake_replaygain)
+    return calls
 
 
 class TestRipDisc:
@@ -129,3 +139,32 @@ class TestRipDisc:
 
         assert vus[0] == (1, 2)
         assert vus[-1] == (2, 2)
+
+    def test_replaygain_sur_l_album_avant_publication(self, disc, config,
+                                                     monkeypatch):
+        calls = _fake_rip(monkeypatch)
+        result = rip_disc(disc, config, ENCODERS['flac'])
+
+        # Un seul appel, sur les fichiers encore dans le temporaire.
+        assert len(calls) == 1
+        assert [p.name for p in calls[0]] == [f.name for f in result.files]
+        assert all('.jewelbox-music-ripper-tmp' in str(p) for p in calls[0])
+        assert result.replaygain == ReplayGainResult(True)
+
+    def test_replaygain_desactive(self, disc, config, monkeypatch):
+        calls = _fake_rip(monkeypatch)
+        config.replaygain = False
+        result = rip_disc(disc, config, ENCODERS['flac'])
+        assert calls == []
+        assert result.replaygain is None
+
+    def test_replaygain_en_echec_n_empeche_pas_la_publication(
+            self, disc, config, monkeypatch):
+        _fake_rip(monkeypatch)
+        monkeypatch.setattr(
+            'jewelbox_ripper.pipeline.apply_replaygain',
+            lambda files: ReplayGainResult(False, 'rsgain absent'))
+        result = rip_disc(disc, config, ENCODERS['flac'])
+        assert result.ok
+        assert all(f.exists() for f in result.files)
+        assert not result.replaygain.applied

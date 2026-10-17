@@ -88,6 +88,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help='ne pas lancer le scan du serveur après le rip')
     parser.add_argument('--no-eject', action='store_true',
                         help='ne pas éjecter le disque à la fin')
+    parser.add_argument('--no-replaygain', action='store_true',
+                        help='ne pas calculer les tags ReplayGain (rsgain)')
     return parser
 
 
@@ -100,6 +102,7 @@ def _resolve_config(args: argparse.Namespace) -> Config:
         'quality': args.quality,
         'device': args.device,
         'paranoia': False if args.fast else None,
+        'replaygain': False if args.no_replaygain else None,
     }
     return build_config(file_data, {k: v for k, v in overrides.items()
                                     if v is not None})
@@ -194,6 +197,11 @@ def _run(args: argparse.Namespace, config: Config) -> int:
 
     for number, message in result.failed:
         _warn(f'Piste {number} échouée : {message}')
+    if result.replaygain is not None:
+        if result.replaygain.applied:
+            _info('Volume normalisé : tags ReplayGain écrits (piste et album)')
+        else:
+            _warn(f'ReplayGain : {result.replaygain.message}')
 
     if not args.no_eject:
         eject(config.device)
