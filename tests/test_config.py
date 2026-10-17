@@ -26,6 +26,13 @@ class TestBuildConfig:
         assert config.server_url == 'http://localhost:3001'
         assert config.audio_format == 'flac'
         assert config.paranoia is True
+        assert config.replaygain is True
+
+    def test_replaygain_desactivable(self):
+        assert build_config({'library_path': '/m', 'replaygain': False},
+                            {}).replaygain is False
+        assert build_config({'library_path': '/m'},
+                            {'replaygain': False}).replaygain is False
 
     def test_la_cli_prime_sur_le_fichier(self):
         config = build_config(

@@ -41,6 +41,8 @@ class Config:
     quality: str | None = None
     device: str | None = None
     paranoia: bool = True
+    # Tags ReplayGain calculés après l'encodage (rsgain, si installé).
+    replaygain: bool = True
     # Facultatif : sans lui, le repli Discogs est simplement indisponible.
     discogs_token: str | None = None
 
@@ -121,5 +123,6 @@ def build_config(file_data: dict, overrides: dict) -> Config:
         quality=(str(pick('quality')) if pick('quality') is not None else None),
         device=(str(pick('device')) if pick('device') else None),
         paranoia=bool(paranoia),
+        replaygain=bool(pick('replaygain', True)),
         discogs_token=(str(token).strip() or None) if token else None,
     )
