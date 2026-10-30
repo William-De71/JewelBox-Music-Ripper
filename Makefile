@@ -21,7 +21,8 @@ REF ?= $(LATEST_TAG)
 
 PKG := jewelbox-music-ripper
 
-.PHONY: help require-pipx install update uninstall config test build clean rip dry-run
+.PHONY: help require-pipx install update uninstall config test build clean rip dry-run \
+        watch-install watch-uninstall watch-logs
 
 help:
 	@echo "Cibles disponibles :"
@@ -34,6 +35,9 @@ help:
 	@echo "  make build     - construit le wheel et le sdist dans dist/"
 	@echo "  make clean     - supprime les artefacts de build et de tests"
 	@echo "  make uninstall - desinstalle la commande"
+	@echo "  make watch-install   - extraction automatique a l'insertion d'un CD"
+	@echo "  make watch-uninstall - arrete et retire l'extraction automatique"
+	@echo "  make watch-logs      - suit le journal de l'extraction automatique"
 
 # pipx est le prerequis commun a install/update/uninstall.
 require-pipx:
@@ -105,6 +109,33 @@ update: require-pipx
 uninstall: require-pipx
 	pipx uninstall jewelbox-music-ripper
 	@echo "La configuration est conservee : $(CONFIG)"
+
+# Service utilisateur systemd : surveille le lecteur et extrait chaque CD
+# insere. Il lance la commande installee (~/.local/bin), jamais ce dossier :
+# « make install » d'abord.
+SERVICE     := jewelbox-rip-watch.service
+SERVICE_DIR := $(HOME)/.config/systemd/user
+
+watch-install:
+	@command -v jewelbox-rip >/dev/null || test -x "$(HOME)/.local/bin/jewelbox-rip" \
+	  || { echo "Commande « jewelbox-rip » absente : make install d'abord."; exit 1; }
+	@test -f "$(CONFIG)" \
+	  || { echo "Configuration absente : make config d'abord."; exit 1; }
+	mkdir -p "$(SERVICE_DIR)"
+	cp data/$(SERVICE) "$(SERVICE_DIR)/$(SERVICE)"
+	systemctl --user daemon-reload
+	systemctl --user enable --now $(SERVICE)
+	@echo
+	@echo "Extraction automatique active : insere un CD."
+	@echo "  Journal : make watch-logs"
+
+watch-uninstall:
+	systemctl --user disable --now $(SERVICE) 2>/dev/null || true
+	rm -f "$(SERVICE_DIR)/$(SERVICE)"
+	systemctl --user daemon-reload
+
+watch-logs:
+	journalctl --user -u $(SERVICE) -f
 
 # Ne remplace jamais une configuration existante.
 config:
