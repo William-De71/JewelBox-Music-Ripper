@@ -1,0 +1,15 @@
+# Extraction automatique des CD : installé par « make watch-install ».
+[Unit]
+Description=JewelBox Music Ripper — extraction automatique des CD insérés
+# Les notifications et le terminal ont besoin de la session graphique.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/jewelbox-rip --watch
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

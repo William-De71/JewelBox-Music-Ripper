@@ -40,6 +40,7 @@ from .identify import (
 )
 from .pipeline import PipelineError, plan_paths, rip_disc
 from .ripper import MissingToolError, RipError, eject, resolve_encoder
+from .watch import watch
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
+        if args.watch:
+            return watch(config.device)
         return _run(args, config)
     except KeyboardInterrupt:
         _warn('\nInterrompu. Rien n\'a été laissé dans la bibliothèque.')
@@ -90,6 +93,9 @@ def _build_parser() -> argparse.ArgumentParser:
                         help='ne pas éjecter le disque à la fin')
     parser.add_argument('--no-replaygain', action='store_true',
                         help='ne pas calculer les tags ReplayGain (rsgain)')
+    parser.add_argument('--watch', action='store_true',
+                        help='surveille le lecteur et extrait chaque CD inséré '
+                             '(service : make watch-install)')
     return parser
 
 

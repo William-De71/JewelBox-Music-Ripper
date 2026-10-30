@@ -202,6 +202,31 @@ Options utiles : `--library`, `--server`, `--device`, `--no-scan`, `--no-eject`.
 Commence par `--dry-run` sur un disque : il affiche l'arborescence qui serait
 produite et l'état de l'album dans la collection, sans rien modifier.
 
+### Extraction automatique à l'insertion
+
+```bash
+make watch-install     # une fois, après make install et make config
+```
+
+Un service utilisateur systemd (`jewelbox-rip --watch`) surveille alors le
+lecteur. Dès qu'un CD audio est inséré :
+
+- **disque reconnu par MusicBrainz** → extraction en arrière-plan avec les
+  réponses par défaut (première édition, album créé dans la collection),
+  notification au début et à la fin, éjection ;
+- **disque inconnu** → un terminal s'ouvre avec `jewelbox-rip` interactif, pour
+  le repli Discogs ou la saisie manuelle.
+
+Un disque déjà dans le lecteur au démarrage de la session n'est pas extrait :
+seule une insertion déclenche quelque chose. Le terminal utilisé est celui de
+`xdg-terminal-exec`, sinon Ptyxis, GNOME Terminal, Console, Konsole ou xterm.
+Rien ne demande les droits root : le lecteur est interrogé directement.
+
+```bash
+make watch-logs        # suit ce que fait le service
+make watch-uninstall   # arrête et retire l'extraction automatique
+```
+
 ### Depuis les sources, pendant le développement
 
 `make dry-run` et `make rip` exécutent le code de ce dossier tel quel, sans rien
