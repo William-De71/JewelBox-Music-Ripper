@@ -1,13 +1,10 @@
-"""Surveillance du lecteur : extraction automatique à l'insertion d'un CD.
+"""Surveillance du lecteur : extraction lancée à l'insertion d'un CD.
 
 `jewelbox-rip --watch` tourne en service utilisateur systemd. Il interroge le
-lecteur toutes les deux secondes et, quand un CD audio vient d'être inséré :
-
-  - disque reconnu par MusicBrainz → extraction en arrière-plan avec les
-    réponses par défaut (`jewelbox-rip --yes`), notifications au début et à
-    la fin ;
-  - disque inconnu → ouverture d'un terminal avec `jewelbox-rip` interactif,
-    pour le repli Discogs ou la saisie manuelle.
+lecteur toutes les deux secondes et, quand un CD audio vient d'être inséré,
+ouvre un terminal avec `jewelbox-rip` interactif : on y choisit l'édition
+(ou on passe par Discogs, la saisie manuelle), et on suit l'avancement et
+les éventuelles erreurs directement.
 
 Un disque déjà présent au démarrage n'est pas extrait : seul un disque inséré
 pendant la surveillance déclenche quelque chose, sans quoi chaque ouverture
@@ -36,16 +33,6 @@ CDROM_DISC_STATUS = 0x5327
 CDS_DISC_OK = 4
 CDS_AUDIO = 100
 CDS_MIXED = 105
-
-# Codes de sortie de `jewelbox-rip` (cli.py), traduits pour la notification.
-EXIT_MESSAGES = {
-    2: 'configuration invalide ou outil manquant',
-    3: 'disque illisible',
-    4: 'serveur injoignable ou album refusé',
-    5: "échec de l'extraction",
-    6: 'certaines pistes ont échoué',
-    130: 'extraction interrompue',
-}
 
 # Terminaux essayés dans l'ordre, avec l'option qui précède la commande.
 # xdg-terminal-exec respecte le terminal choisi par l'utilisateur ; Ptyxis est
@@ -95,10 +82,9 @@ class InsertionDetector:
         return inserted
 
 
-def rip_command(device: str, *, interactive: bool) -> list[str]:
+def rip_command(device: str) -> list[str]:
     """La commande d'extraction, avec le même interpréteur que le service."""
-    command = [sys.executable, '-m', 'jewelbox_ripper', '--device', device]
-    return command if interactive else command + ['--yes']
+    return [sys.executable, '-m', 'jewelbox_ripper', '--device', device]
 
 
 def terminal_command(command: list[str],
@@ -120,10 +106,6 @@ def _quote(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def exit_message(returncode: int) -> str:
-    return EXIT_MESSAGES.get(returncode, f'échec (code {returncode})')
-
-
 def notify(title: str, body: str = '',
            which: Callable[[str], str | None] = shutil.which,
            run: Callable[..., object] = subprocess.run) -> None:
@@ -141,17 +123,10 @@ def notify(title: str, body: str = '',
 
 @dataclass
 class Watcher:
-    """Décide quoi faire de chaque disque inséré.
-
-    `identify` renvoie le résumé de la première édition MusicBrainz, ou None
-    quand le disque est inconnu (ou MusicBrainz injoignable : la saisie
-    interactive reste alors possible).
-    """
+    """Ouvre un terminal d'extraction pour chaque disque inséré."""
 
     device: str
     has_disc: Callable[[str], bool] = drive_has_audio_disc
-    identify: Callable[[str], str | None] | None = None
-    run: Callable[..., subprocess.CompletedProcess] = subprocess.run
     popen: Callable[..., object] = subprocess.Popen
     which: Callable[[str], str | None] = shutil.which
     notify: Callable[[str, str], None] = notify
@@ -162,46 +137,18 @@ class Watcher:
             self.on_inserted()
 
     def on_inserted(self) -> None:
-        identify = self.identify or identify_disc
-        summary = identify(self.device)
-        if summary is None:
-            self._open_terminal()
-            return
-
-        self.notify('Extraction du CD', summary)
-        # Bloquant : pendant l'extraction, le lecteur n'est plus surveillé,
-        # et l'éjection finale est vue comme un retrait au relevé suivant.
-        result = self.run(rip_command(self.device, interactive=False), check=False)
-        if result.returncode == 0:
-            self.notify('CD extrait', summary)
-        else:
-            self.notify('Extraction du CD : ' + exit_message(result.returncode), summary)
-
-    def _open_terminal(self) -> None:
-        command = terminal_command(rip_command(self.device, interactive=True), self.which)
+        command = terminal_command(rip_command(self.device), self.which)
         if command is None:
-            self.notify('CD inconnu de MusicBrainz',
+            self.notify('CD inséré',
                         'Aucun terminal trouvé : lance « jewelbox-rip » à la main.')
             return
-        self.notify('CD inconnu de MusicBrainz', 'Identification à faire dans le terminal.')
+        self.notify('CD inséré', "Extraction à suivre dans le terminal.")
         try:
+            # Non bloquant : le terminal vit sa vie, la surveillance continue.
             self.popen(command, start_new_session=True)
         except OSError as exc:
-            self.notify('CD inconnu de MusicBrainz',
+            self.notify('CD inséré',
                         f'Terminal impossible à ouvrir ({exc}) : lance « jewelbox-rip ».')
-
-
-def identify_disc(device: str) -> str | None:
-    """Résumé de la première édition MusicBrainz du disque, ou None."""
-    from .identify import IdentificationError, lookup_candidates, read_disc_id
-
-    try:
-        disc_id, _ = read_disc_id(device)
-        candidates = lookup_candidates(disc_id)
-    except IdentificationError as exc:
-        print(f'Identification impossible : {exc}', flush=True)
-        return None
-    return candidates[0].summary() if candidates else None
 
 
 def watch(device: str | None, *, sleep: Callable[[float], None] = time.sleep,

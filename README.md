@@ -209,13 +209,10 @@ make watch-install     # une fois, après make install et make config
 ```
 
 Un service utilisateur systemd (`jewelbox-rip --watch`) surveille alors le
-lecteur. Dès qu'un CD audio est inséré :
-
-- **disque reconnu par MusicBrainz** → extraction en arrière-plan avec les
-  réponses par défaut (première édition, album créé dans la collection),
-  notification au début et à la fin, éjection ;
-- **disque inconnu** → un terminal s'ouvre avec `jewelbox-rip` interactif, pour
-  le repli Discogs ou la saisie manuelle.
+lecteur. Dès qu'un CD audio est inséré, un terminal s'ouvre avec
+`jewelbox-rip` interactif : on y choisit l'édition (ou on passe par Discogs, la
+saisie manuelle), et on suit l'avancement piste par piste ainsi que les
+éventuelles erreurs.
 
 Un disque déjà dans le lecteur au démarrage de la session n'est pas extrait :
 seule une insertion déclenche quelque chose. Le terminal utilisé est celui de
