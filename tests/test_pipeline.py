@@ -117,6 +117,24 @@ class TestRipDisc:
         assert result.failed[0][0] == 2
         assert 'rayé' in result.failed[0][1]
 
+    def test_piste_relue_sans_verification_signalee(self, disc, config, monkeypatch):
+        def fake(track, output, spec, *, on_degraded, **kwargs):
+            output.write_bytes(b'audio-simule')
+            if track.number == 2:
+                on_degraded()
+            return output
+
+        monkeypatch.setattr('jewelbox_ripper.pipeline.rip_and_encode', fake)
+        monkeypatch.setattr('jewelbox_ripper.pipeline.tag_file',
+                            lambda path, disc, track: None)
+
+        result = rip_disc(disc, config, ENCODERS['flac'])
+
+        # La piste est publiée : le signalement n'est pas un échec.
+        assert result.ok
+        assert len(result.files) == 2
+        assert result.degraded == [2]
+
     def test_echec_total_ne_laisse_rien(self, disc, config, monkeypatch):
         _fake_rip(monkeypatch, failing_tracks={1, 2})
 
@@ -130,6 +148,23 @@ class TestRipDisc:
         _fake_rip(monkeypatch)
         rip_disc(disc, config, ENCODERS['flac'])
         assert not (config.library_path / '.jewelbox-music-ripper-tmp').exists()
+
+    def test_avancement_de_piste_transmis(self, disc, config, monkeypatch):
+        vus = []
+
+        def fake(track, output, spec, *, on_progress, **kwargs):
+            on_progress(0.5, 'Lecture')
+            output.write_bytes(b'audio-simule')
+            return output
+
+        monkeypatch.setattr('jewelbox_ripper.pipeline.rip_and_encode', fake)
+        monkeypatch.setattr('jewelbox_ripper.pipeline.tag_file',
+                            lambda path, disc, track: None)
+
+        rip_disc(disc, config, ENCODERS['flac'],
+                 track_progress=lambda f, phase: vus.append((f, phase)))
+
+        assert vus == [(0.5, 'Lecture'), (0.5, 'Lecture')]
 
     def test_progression_rapportee(self, disc, config, monkeypatch):
         _fake_rip(monkeypatch)

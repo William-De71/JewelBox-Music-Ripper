@@ -242,7 +242,13 @@ casser l'outil dont tu te sers pour ripper.
 
 **Correction d'erreurs par défaut.** `cdparanoia` relit les secteurs douteux
 plutôt que d'accepter des clics. C'est plus lent, et c'est l'intérêt pour de
-l'archivage — `--fast` désactive ce comportement.
+l'archivage — `--fast` désactive ce comportement. Pour qu'une zone difficile ne
+bloque pas le rip, chaque piste dispose d'un temps limité (deux fois sa durée,
+5 minutes au minimum, 30 minutes si la durée est inconnue). Au-delà, elle est
+relue sans vérification et signalée à réécouter dans le bilan. Dans un terminal,
+une barre montre l'avancement de la piste et le temps écoulé : un pourcentage
+figé alors que le temps avance indique une zone difficile. Sans durée connue,
+seuls l'étape et le temps sont affichés.
 
 **Volume normalisé.** Après l'encodage, `rsgain` mesure le volume perçu
 (EBU R128) et écrit les tags ReplayGain de chaque piste et de l'album, avant
