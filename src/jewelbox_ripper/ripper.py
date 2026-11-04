@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +27,10 @@ class RipError(RuntimeError):
 
 class MissingToolError(RipError):
     """Un binaire externe requis est absent."""
+
+
+class RipTimeoutError(RipError):
+    """cdparanoia a dépassé le temps accordé à la piste."""
 
 
 @dataclass(frozen=True)
@@ -70,7 +76,77 @@ ENCODERS: dict[str, EncoderSpec] = {
 # fournissent cd-paranoia. On accepte les deux.
 CDPARANOIA_BINARIES = ('cdparanoia', 'cd-paranoia')
 
+# cdparanoia n'a aucune limite de temps : sur une zone difficile, il peut relire
+# les mêmes secteurs pendant des heures sans rien écrire. Un disque sain s'extrait
+# bien plus vite que le temps réel, donc deux fois la durée de la piste ne pénalise
+# que les zones qui posent vraiment problème.
+RIP_BUDGET_FACTOR = 2
+RIP_BUDGET_MIN_SECONDS = 300.0
+# Durée inconnue (saisie manuelle, métadonnées incomplètes).
+RIP_BUDGET_DEFAULT_SECONDS = 1800.0
+
 ProgressCallback = Callable[[int, int, str], None]
+
+# (avancement de 0 à 1, ou None si la durée est inconnue ; étape en cours)
+TrackProgressCallback = Callable[[float | None, str], None]
+
+PHASE_READ = 'Lecture'
+PHASE_FAST_READ = 'Relecture rapide'
+PHASE_ENCODE = 'Encodage'
+
+# Audio CD : 44,1 kHz, 16 bits, stéréo. L'en-tête WAV fait 44 octets.
+WAV_BYTES_PER_SECOND = 176_400
+WAV_HEADER_BYTES = 44
+PROGRESS_POLL_SECONDS = 0.5
+
+
+def wav_fraction(size: int, duration_seconds: float | None) -> float | None:
+    """Part de la piste déjà écrite dans le WAV. None si la durée est inconnue."""
+    if not duration_seconds:
+        return None
+    audio_bytes = max(0, size - WAV_HEADER_BYTES)
+    return min(1.0, audio_bytes / (duration_seconds * WAV_BYTES_PER_SECOND))
+
+
+@contextmanager
+def _report_wav_growth(wav: Path, duration_seconds: float | None, phase: str,
+                       report: TrackProgressCallback | None) -> Iterator[None]:
+    """Rapporte l'avancement d'après la taille du WAV pendant son écriture.
+
+    Le rapport continue quand le fichier ne grandit plus : c'est ce qui permet
+    de voir le temps passer pendant que cdparanoia relit une zone difficile.
+    """
+    if report is None:
+        yield
+        return
+
+    def current_fraction() -> float | None:
+        try:
+            size = wav.stat().st_size
+        except OSError:
+            size = 0
+        return wav_fraction(size, duration_seconds)
+
+    def poll() -> None:
+        while not stop.wait(PROGRESS_POLL_SECONDS):
+            report(current_fraction(), phase)
+
+    stop = threading.Event()
+    report(wav_fraction(0, duration_seconds), phase)
+    watcher = threading.Thread(target=poll, daemon=True)
+    watcher.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        watcher.join()
+
+
+def rip_budget(duration_seconds: float | None) -> float:
+    """Temps maximal accordé à une lecture de piste, en secondes."""
+    if not duration_seconds:
+        return RIP_BUDGET_DEFAULT_SECONDS
+    return max(RIP_BUDGET_MIN_SECONDS, duration_seconds * RIP_BUDGET_FACTOR)
 
 
 def find_cdparanoia() -> str:
@@ -101,7 +177,8 @@ def resolve_encoder(fmt: str) -> EncoderSpec:
 
 def rip_track(track_number: int, destination: Path, *,
               device: str | None = None,
-              paranoia: bool = True) -> Path:
+              paranoia: bool = True,
+              timeout: float | None = None) -> Path:
     """Extrait une piste en WAV. Renvoie le chemin du fichier produit."""
     binary = find_cdparanoia()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -118,7 +195,12 @@ def rip_track(track_number: int, destination: Path, *,
 
     try:
         result = subprocess.run(command, capture_output=True, text=True,
-                                check=False)
+                                check=False, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RipTimeoutError(
+            f'Extraction de la piste {track_number} interrompue après '
+            f'{int(exc.timeout) // 60} min : lecture trop lente'
+        ) from exc
     except OSError as exc:
         raise RipError(f'Lancement de cdparanoia impossible : {exc}') from exc
 
@@ -162,12 +244,39 @@ def rip_and_encode(track: TrackInfo, output: Path, spec: EncoderSpec, *,
                    workdir: Path,
                    device: str | None = None,
                    paranoia: bool = True,
-                   quality: str | None = None) -> Path:
-    """Extrait puis encode une piste, en nettoyant le WAV intermédiaire."""
+                   quality: str | None = None,
+                   on_degraded: Callable[[], None] | None = None,
+                   on_progress: TrackProgressCallback | None = None) -> Path:
+    """Extrait puis encode une piste, en nettoyant le WAV intermédiaire.
+
+    Si la lecture vérifiée dépasse son budget, la piste est relue sans
+    vérification. `on_degraded` signale alors à l'appelant une piste produite,
+    mais dont l'exactitude n'est pas garantie.
+    """
     wav = workdir / f'track{track.number:03d}.wav'
+    budget = rip_budget(track.duration_seconds)
+    duration = track.duration_seconds
+    degraded = False
     try:
-        rip_track(track.number, wav, device=device, paranoia=paranoia)
-        return encode(wav, output, spec, quality)
+        try:
+            with _report_wav_growth(wav, duration, PHASE_READ, on_progress):
+                rip_track(track.number, wav, device=device, paranoia=paranoia,
+                          timeout=budget)
+        except RipTimeoutError:
+            if not paranoia:
+                raise
+            wav.unlink(missing_ok=True)
+            with _report_wav_growth(wav, duration, PHASE_FAST_READ, on_progress):
+                rip_track(track.number, wav, device=device, paranoia=False,
+                          timeout=budget)
+            degraded = True
+
+        if on_progress:
+            on_progress(1.0, PHASE_ENCODE)
+        encoded = encode(wav, output, spec, quality)
+        if degraded and on_degraded:
+            on_degraded()
+        return encoded
     finally:
         wav.unlink(missing_ok=True)
 

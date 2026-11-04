@@ -12,13 +12,14 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 
 from .config import Config
 from .disc import DiscInfo
 from .loudness import ReplayGainResult, apply_replaygain
 from .naming import album_relpath, track_filename
-from .ripper import EncoderSpec, rip_and_encode
+from .ripper import EncoderSpec, TrackProgressCallback, rip_and_encode
 from .tagging import tag_file
 
 # (index 1-based, total, libellé de l'étape en cours)
@@ -36,6 +37,8 @@ class RipResult:
     album_dir: Path
     files: list[Path] = field(default_factory=list)
     failed: list[tuple[int, str]] = field(default_factory=list)
+    # Pistes relues sans vérification : présentes, mais à réécouter.
+    degraded: list[int] = field(default_factory=list)
     # None : étape désactivée (replaygain = false).
     replaygain: ReplayGainResult | None = None
 
@@ -63,7 +66,8 @@ def plan_paths(disc: DiscInfo, config: Config) -> tuple[Path, list[tuple[int, Pa
 
 
 def rip_disc(disc: DiscInfo, config: Config, spec: EncoderSpec, *,
-             progress: ProgressCallback | None = None) -> RipResult:
+             progress: ProgressCallback | None = None,
+             track_progress: TrackProgressCallback | None = None) -> RipResult:
     """Extrait le disque entier et le publie dans la bibliothèque."""
     if not disc.tracks:
         raise PipelineError("Aucune piste à extraire.")
@@ -104,6 +108,8 @@ def rip_disc(disc: DiscInfo, config: Config, spec: EncoderSpec, *,
                         device=config.device,
                         paranoia=config.paranoia,
                         quality=config.quality,
+                        on_degraded=partial(result.degraded.append, track.number),
+                        on_progress=track_progress,
                     )
                     tag_file(staged, disc, track)
                     staged_files.append(staged)

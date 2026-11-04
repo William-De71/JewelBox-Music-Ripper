@@ -6,6 +6,7 @@ pas le comportement des outils eux-mêmes.
 """
 
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -16,12 +17,15 @@ from jewelbox_ripper.ripper import (
     EncoderSpec,
     MissingToolError,
     RipError,
+    RipTimeoutError,
     eject,
     encode,
     find_cdparanoia,
     resolve_encoder,
     rip_and_encode,
+    rip_budget,
     rip_track,
+    wav_fraction,
 )
 
 
@@ -198,6 +202,49 @@ class TestRipTrack:
         with pytest.raises(RipError, match='impossible'):
             rip_track(1, tmp_path / 'o.wav')
 
+    def test_delai_depasse(self, tmp_path, monkeypatch, cdparanoia):
+        seen = {}
+
+        def too_slow(command, **kwargs):
+            seen.update(kwargs)
+            raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+
+        monkeypatch.setattr(subprocess, 'run', too_slow)
+
+        with pytest.raises(RipTimeoutError, match='piste 4'):
+            rip_track(4, tmp_path / 'o.wav', timeout=600)
+
+        assert seen['timeout'] == 600
+
+
+class TestWavFraction:
+    def test_moitie_de_piste(self):
+        assert wav_fraction(44 + 176_400, 2.0) == 0.5
+
+    def test_en_tete_seul(self):
+        assert wav_fraction(44, 100.0) == 0.0
+
+    def test_fichier_plus_court_que_l_en_tete(self):
+        assert wav_fraction(0, 100.0) == 0.0
+
+    def test_plafonne_a_cent_pour_cent(self):
+        # La durée vient des métadonnées : elle peut être un peu sous-estimée.
+        assert wav_fraction(44 + 176_400 * 3, 2.0) == 1.0
+
+    def test_duree_inconnue(self):
+        assert wav_fraction(5000, None) is None
+
+
+class TestRipBudget:
+    def test_proportionnel_a_la_duree(self):
+        assert rip_budget(600) == 1200
+
+    def test_minimum_pour_les_pistes_courtes(self):
+        assert rip_budget(30) == 300
+
+    def test_duree_inconnue(self):
+        assert rip_budget(None) == 1800
+
 
 class TestEncode:
     def test_succes(self, tmp_path, monkeypatch):
@@ -305,6 +352,127 @@ class TestRipAndEncode:
 
         assert seen['device'] == '/dev/sr2'
         assert seen['paranoia'] is False
+
+    def _fake_tools(self, monkeypatch, rip_outcomes):
+        """Chaque lecture suit `rip_outcomes` : True écrit le WAV, False dépasse le délai."""
+        modes = []
+
+        def fake_rip(number, destination, **kwargs):
+            modes.append(kwargs['paranoia'])
+            # Comme le vrai cdparanoia : un WAV partiel reste sur le disque.
+            destination.write_bytes(b'RIFF')
+            if not rip_outcomes[len(modes) - 1]:
+                raise RipTimeoutError('lecture trop lente')
+            return destination
+
+        def fake_encode(wav, output, spec, quality=None):
+            output.write_bytes(b'fLaC')
+            return output
+
+        monkeypatch.setattr('jewelbox_ripper.ripper.rip_track', fake_rip)
+        monkeypatch.setattr('jewelbox_ripper.ripper.encode', fake_encode)
+        return modes
+
+    def test_relecture_rapide_apres_delai(self, tmp_path, monkeypatch):
+        modes = self._fake_tools(monkeypatch, [False, True])
+        degraded = []
+
+        out = rip_and_encode(TrackInfo(3, 'T', 200.0), tmp_path / 'o.flac',
+                             ENCODERS['flac'], workdir=tmp_path,
+                             on_degraded=lambda: degraded.append(3))
+
+        assert out.exists()
+        assert modes == [True, False]
+        assert degraded == [3]
+        assert not list(tmp_path.glob('*.wav'))
+
+    def test_lecture_normale_non_signalee(self, tmp_path, monkeypatch):
+        modes = self._fake_tools(monkeypatch, [True])
+        degraded = []
+
+        rip_and_encode(TrackInfo(3, 'T', 200.0), tmp_path / 'o.flac',
+                       ENCODERS['flac'], workdir=tmp_path,
+                       on_degraded=lambda: degraded.append(3))
+
+        assert modes == [True]
+        assert degraded == []
+
+    def test_echec_si_la_relecture_depasse_aussi(self, tmp_path, monkeypatch):
+        # Le rip doit toujours finir par passer à la piste suivante.
+        modes = self._fake_tools(monkeypatch, [False, False])
+        degraded = []
+
+        with pytest.raises(RipTimeoutError):
+            rip_and_encode(TrackInfo(3, 'T', 200.0), tmp_path / 'o.flac',
+                           ENCODERS['flac'], workdir=tmp_path,
+                           on_degraded=lambda: degraded.append(3))
+
+        assert modes == [True, False]
+        assert degraded == []
+        assert not list(tmp_path.glob('*.wav'))
+
+    def test_etapes_rapportees(self, tmp_path, monkeypatch):
+        self._fake_tools(monkeypatch, [False, True])
+        vus = []
+
+        rip_and_encode(TrackInfo(3, 'T', 200.0), tmp_path / 'o.flac',
+                       ENCODERS['flac'], workdir=tmp_path,
+                       on_progress=lambda f, phase: vus.append((f, phase)))
+
+        assert vus == [(0.0, 'Lecture'), (0.0, 'Relecture rapide'),
+                       (1.0, 'Encodage')]
+
+    def test_avancement_suivi_pendant_la_lecture(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('jewelbox_ripper.ripper.PROGRESS_POLL_SECONDS', 0.001)
+        vus = []
+        seen_growth = threading.Event()
+
+        def report(fraction, phase):
+            vus.append(fraction)
+            if fraction == 0.5:
+                seen_growth.set()
+
+        def fake_rip(number, destination, **kwargs):
+            destination.write_bytes(b'\0' * (44 + 176_400))
+            assert seen_growth.wait(5)
+            return destination
+
+        monkeypatch.setattr('jewelbox_ripper.ripper.rip_track', fake_rip)
+        monkeypatch.setattr('jewelbox_ripper.ripper.encode',
+                            lambda wav, output, spec, quality=None: output)
+
+        rip_and_encode(TrackInfo(1, 'T', 2.0), tmp_path / 'o.flac',
+                       ENCODERS['flac'], workdir=tmp_path, on_progress=report)
+
+        assert 0.5 in vus
+
+    def test_avancement_sans_fichier_encore_cree(self, tmp_path, monkeypatch):
+        monkeypatch.setattr('jewelbox_ripper.ripper.PROGRESS_POLL_SECONDS', 0.001)
+        vus = threading.Semaphore(0)
+
+        def fake_rip(number, destination, **kwargs):
+            # Plusieurs relevés avant que cdparanoia ait créé le WAV.
+            for _ in range(3):
+                assert vus.acquire(timeout=5)
+            destination.write_bytes(b'RIFF')
+            return destination
+
+        monkeypatch.setattr('jewelbox_ripper.ripper.rip_track', fake_rip)
+        monkeypatch.setattr('jewelbox_ripper.ripper.encode',
+                            lambda wav, output, spec, quality=None: output)
+
+        rip_and_encode(TrackInfo(1, 'T', 2.0), tmp_path / 'o.flac',
+                       ENCODERS['flac'], workdir=tmp_path,
+                       on_progress=lambda f, phase: vus.release())
+
+    def test_mode_rapide_pas_de_seconde_lecture(self, tmp_path, monkeypatch):
+        modes = self._fake_tools(monkeypatch, [False])
+
+        with pytest.raises(RipTimeoutError):
+            rip_and_encode(TrackInfo(3, 'T', 200.0), tmp_path / 'o.flac',
+                           ENCODERS['flac'], workdir=tmp_path, paranoia=False)
+
+        assert modes == [False]
 
 
 class TestEject:

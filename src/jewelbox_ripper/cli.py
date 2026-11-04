@@ -15,6 +15,7 @@ Déroulé d'une exécution :
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -41,6 +42,8 @@ from .identify import (
 from .pipeline import PipelineError, plan_paths, rip_disc
 from .ripper import MissingToolError, RipError, eject, resolve_encoder
 from .watch import watch
+
+BAR_WIDTH = 20
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -190,7 +193,14 @@ def _run(args: argparse.Namespace, config: Config) -> int:
 
     started = time.monotonic()
     try:
-        result = rip_disc(disc, config, spec, progress=_progress)
+        # Hors terminal (service, redirection), une barre rafraîchie deux fois
+        # par seconde noierait le journal : seules les étapes y sont écrites.
+        if sys.stdout.isatty():
+            display = _RipDisplay()
+            result = rip_disc(disc, config, spec, progress=display.step,
+                              track_progress=display.update)
+        else:
+            result = rip_disc(disc, config, spec, progress=_progress)
     except PipelineError as exc:
         _error(str(exc))
         return 5
@@ -203,6 +213,10 @@ def _run(args: argparse.Namespace, config: Config) -> int:
 
     for number, message in result.failed:
         _warn(f'Piste {number} échouée : {message}')
+    for number in result.degraded:
+        _warn(f'Piste {number} : lecture vérifiée trop lente, relue sans '
+              'correction d\'erreurs. Elle peut contenir de courtes coupures : '
+              'à réécouter.')
     if result.replaygain is not None:
         if result.replaygain.applied:
             _info('Volume normalisé : tags ReplayGain écrits (piste et album)')
@@ -574,6 +588,59 @@ def _print_plan(album_dir: Path, planned: list[tuple[int, Path]],
 def _progress(index: int, total: int, label: str) -> None:
     # \r pour une ligne unique qui se réécrit, sans noyer le terminal.
     print(f'\r  [{index:2d}/{total}] {label[:60]:<60}', end='', flush=True)
+
+
+def format_progress_line(step: str, fraction: float | None, phase: str,
+                         elapsed_seconds: float, width: int) -> str:
+    """Compose la ligne de progression, sans jamais dépasser `width`.
+
+    Une ligne plus large que le terminal passerait à la ligne, et le \\r ne
+    réécrirait plus que sa dernière partie.
+    """
+    minutes, seconds = divmod(int(elapsed_seconds), 60)
+    if fraction is None:
+        # Durée inconnue : pas de pourcentage à afficher sans mentir.
+        gauge = ''
+    else:
+        filled = round(fraction * BAR_WIDTH)
+        gauge = (f'{"█" * filled}{"░" * (BAR_WIDTH - filled)} '
+                 f'{int(fraction * 100):3d} %  ')
+    suffix = f'  {gauge}{phase}  {minutes}:{seconds:02d}'
+
+    room = max(0, width - 1 - len(suffix))
+    return (step[:room].ljust(room) + suffix)[:max(0, width - 1)]
+
+
+class _RipDisplay:
+    """Affiche l'étape en cours et l'avancement de la piste sur une seule ligne."""
+
+    def __init__(self) -> None:
+        self._step = ''
+        self._phase: str | None = None
+        self._started = 0.0
+
+    def step(self, index: int, total: int, label: str) -> None:
+        self._step = f'  [{index:2d}/{total}] {label}'
+        self._phase = None
+        self._write(self._step)
+
+    def update(self, fraction: float | None, phase: str) -> None:
+        # Le temps repart à chaque étape : c'est lui qui montre une lecture
+        # qui stagne, et la relecture rapide doit donc recommencer à zéro.
+        if phase != self._phase:
+            self._phase = phase
+            self._started = time.monotonic()
+        self._write(format_progress_line(
+            self._step, fraction, phase, time.monotonic() - self._started,
+            self._width()))
+
+    def _write(self, line: str) -> None:
+        print(f'\r{line[:self._width() - 1]:<{self._width() - 1}}',
+              end='', flush=True)
+
+    @staticmethod
+    def _width() -> int:
+        return shutil.get_terminal_size().columns
 
 
 def _confirm(question: str, *, default: bool, assume_yes: bool) -> bool:

@@ -8,8 +8,41 @@ un disque n'est identifié nulle part.
 
 import pytest
 
-from jewelbox_ripper.cli import _discogs_credentials, _manual_disc, _prompt
+from jewelbox_ripper.cli import (
+    _discogs_credentials,
+    _manual_disc,
+    _prompt,
+    format_progress_line,
+)
 from jewelbox_ripper.config import Config
+
+
+class TestFormatProgressLine:
+    def test_barre_et_pourcentage(self):
+        line = format_progress_line('  [ 3/12] Titre', 0.5, 'Lecture', 83, 100)
+        assert '█' * 10 + '░' * 10 in line
+        assert '50 %' in line
+        assert 'Lecture  1:23' in line
+        assert line.startswith('  [ 3/12] Titre')
+
+    def test_duree_inconnue_sans_barre(self):
+        line = format_progress_line('  [ 1/2] T', None, 'Lecture', 5, 80)
+        assert '%' not in line
+        assert '█' not in line
+        assert 'Lecture  0:05' in line
+
+    def test_ne_deborde_jamais_du_terminal(self):
+        # Une ligne trop large passerait à la ligne et casserait le \r.
+        titre = '  [ 1/2] ' + 'très long titre ' * 20
+        for width in (20, 40, 80, 200):
+            line = format_progress_line(titre, 0.42, 'Relecture rapide', 600, width)
+            assert len(line) == width - 1
+
+    def test_titre_tronque_avant_la_barre(self):
+        titre = '  [ 1/2] ' + 'x' * 200
+        line = format_progress_line(titre, 1.0, 'Lecture', 0, 80)
+        assert '100 %' in line
+        assert 'Lecture  0:00' in line
 
 
 def saisies(monkeypatch, reponses):
