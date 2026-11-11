@@ -5,6 +5,7 @@ Endpoints utilisés (vérifiés dans server/src/routes/, préfixe /api) :
   GET   /api/settings                          → réglages, dont Discogs
   GET   /api/albums/duplicate?title=&artist=   → { duplicate, album }
   POST  /api/albums                            → 201 album | 409 conflit
+  GET   /api/albums/:id                        → fiche complète, avec pistes
   PATCH /api/albums/:id                        → mise à jour (is_wanted…)
   POST  /api/player/scan                       → lance l'appariement
   GET   /api/player/scan/status                → progression et résultat
@@ -49,9 +50,14 @@ class TrackPayload:
     position: int
     title: str
     duration: str | None = None  # « mm:ss », comme le reste de la collection
+    # Un album peut tenir sur plusieurs CD, la numérotation repartant à 1 sur
+    # chacun. Le serveur suppose le CD 1 quand le champ est absent.
+    disc: int = 1
 
     def to_json(self) -> dict[str, Any]:
         data: dict[str, Any] = {'position': self.position, 'title': self.title}
+        if self.disc != 1:
+            data['disc'] = self.disc
         if self.duration:
             data['duration'] = self.duration
         return data
@@ -207,6 +213,10 @@ class JewelBoxApi:
         télécharge lui-même la pochette et la remplace par une URL locale.
         """
         return self._request('POST', '/api/albums', body=album.to_json())
+
+    def get_album(self, album_id: int) -> dict[str, Any]:
+        """La fiche complète d'un album, pistes comprises."""
+        return self._request('GET', f'/api/albums/{album_id}')
 
     def update_album(self, album_id: int, changes: dict[str, Any]) -> dict[str, Any]:
         return self._request('PATCH', f'/api/albums/{album_id}', body=changes)

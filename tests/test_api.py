@@ -50,6 +50,12 @@ class TestPayloads:
             {'position': 2, 'title': 'Deux'},
         ]
 
+    def test_cd_precise_au_dela_du_premier(self):
+        # Le serveur suppose le CD 1 : seul un autre CD doit être annoncé.
+        assert 'disc' not in TrackPayload(1, 'Un').to_json()
+        assert TrackPayload(1, 'Un', disc=2).to_json() == {
+            'position': 1, 'title': 'Un', 'disc': 2}
+
 
 class FakeResponse:
     def __init__(self, payload):
