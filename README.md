@@ -71,9 +71,26 @@ mélanger aux autres paquets Python de ta session.
 ### Mise à jour
 
 ```bash
+jewelbox-rip --version   # la version installée
 make update              # dernière version publiée
 make update REF=v1.0.0   # une version précise, ou pour revenir en arrière
 ```
+
+Les versions publiées et leur contenu sont listés sur la page
+[Releases](https://github.com/William-De71/JewelBox-Music-Ripper/releases) du
+dépôt.
+
+Si l'[extraction automatique](#extraction-automatique-à-linsertion) est active,
+relance ensuite le service : il tourne depuis l'ouverture de la session et
+garde l'ancienne version en mémoire tant qu'il n'est pas redémarré.
+
+```bash
+systemctl --user restart jewelbox-rip-watch.service
+```
+
+Mets aussi le serveur à jour quand une version du ripper l'annonce. Depuis la
+1.7.0, les coffrets (un album sur plusieurs CD) demandent un serveur JewelBox
+Music Library 1.26.0 ou plus récent.
 
 `make update` détermine tout seul le dernier tag `vX.Y.Z` du dépôt distant et
 l'installe. **Seules les versions publiées sont installées** : du code poussé sur
