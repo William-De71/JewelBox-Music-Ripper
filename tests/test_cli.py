@@ -8,13 +8,16 @@ un disque n'est identifié nulle part.
 
 import pytest
 
+from jewelbox_ripper.api import ApiError
 from jewelbox_ripper.cli import (
+    _add_missing_disc,
     _discogs_credentials,
     _manual_disc,
     _prompt,
     format_progress_line,
 )
 from jewelbox_ripper.config import Config
+from jewelbox_ripper.disc import DiscInfo, TrackInfo
 
 
 class TestFormatProgressLine:
@@ -206,3 +209,84 @@ class TestCascadeIdentifiantsDiscogs:
         config = Config(library_path='/tmp', discogs_token=None)
         creds = _discogs_credentials(config, self.FakeApi(('cle', 'secret')))
         assert creds.valid
+
+
+class TestAddMissingDisc:
+    """Le deuxième CD d'un coffret complète l'album créé par le premier."""
+
+    class FakeApi:
+        def __init__(self, tracks, fail=False):
+            self.tracks = tracks
+            self.fail = fail
+            self.updates = []
+
+        def get_album(self, album_id):
+            if self.fail:
+                raise ApiError('panne')
+            return {'id': album_id, 'tracks': self.tracks}
+
+        def update_album(self, album_id, changes):
+            self.updates.append((album_id, changes))
+            return {}
+
+    CD1 = [
+        {'id': 1, 'disc': 1, 'position': 1, 'title': 'In the Flesh?',
+         'duration': '3:19', 'has_file': True},
+        {'id': 2, 'disc': 1, 'position': 2, 'title': 'The Thin Ice',
+         'duration': None},
+    ]
+
+    @staticmethod
+    def _cd2():
+        return DiscInfo(
+            artist='Pink Floyd', album='The Wall', disc_number=2, disc_total=2,
+            tracks=[TrackInfo(1, 'Hey You', 280.0), TrackInfo(2, 'Vera')],
+        )
+
+    def _run(self, api, disc=None, **kwargs):
+        options = {'dry_run': False, 'assume_yes': True, **kwargs}
+        _add_missing_disc(api, {'id': 7}, disc or self._cd2(), **options)
+
+    def test_ajoute_les_pistes_en_gardant_les_existantes(self):
+        api = self.FakeApi(self.CD1)
+        self._run(api)
+
+        (album_id, changes), = api.updates
+        assert album_id == 7
+        assert changes['tracks'] == [
+            {'disc': 1, 'position': 1, 'title': 'In the Flesh?', 'duration': '3:19'},
+            {'disc': 1, 'position': 2, 'title': 'The Thin Ice'},
+            {'position': 1, 'title': 'Hey You', 'duration': '4:40', 'disc': 2},
+            {'position': 2, 'title': 'Vera', 'disc': 2},
+        ]
+
+    def test_cd_deja_present(self):
+        api = self.FakeApi(self.CD1 + [
+            {'id': 3, 'disc': 2, 'position': 1, 'title': 'Hey You'}])
+        self._run(api)
+        assert api.updates == []
+
+    def test_pistes_deja_saisies_sur_un_autre_cd(self):
+        # Coffret saisi à plat avant la gestion des CD : pas de doublons.
+        api = self.FakeApi(self.CD1 + [
+            {'id': 3, 'position': 3, 'title': 'hey you'},
+            {'id': 4, 'position': 4, 'title': 'Vera'}])
+        self._run(api)
+        assert api.updates == []
+
+    def test_dry_run_ne_modifie_rien(self):
+        api = self.FakeApi(self.CD1)
+        self._run(api, dry_run=True)
+        assert api.updates == []
+
+    def test_refus_de_l_utilisateur(self, monkeypatch):
+        monkeypatch.setattr('jewelbox_ripper.cli._confirm',
+                            lambda *args, **kwargs: False)
+        api = self.FakeApi(self.CD1)
+        self._run(api, assume_yes=False)
+        assert api.updates == []
+
+    def test_fiche_illisible(self):
+        api = self.FakeApi(self.CD1, fail=True)
+        self._run(api)
+        assert api.updates == []

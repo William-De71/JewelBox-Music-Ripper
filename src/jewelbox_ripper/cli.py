@@ -18,6 +18,7 @@ import argparse
 import shutil
 import sys
 import time
+from typing import Any
 from pathlib import Path
 
 from . import __version__
@@ -469,6 +470,10 @@ def _check_collection(api: JewelBoxApi, disc: DiscInfo, *,
                     _info('Album marqué comme possédé.')
                 except (ApiError, KeyError, ValueError) as exc:
                     _warn(f'Mise à jour impossible : {exc}')
+
+        if disc.disc_total > 1:
+            _add_missing_disc(api, existing, disc, dry_run=dry_run,
+                              assume_yes=assume_yes)
         return True
 
     # Absent : la comparaison serveur est stricte alors que le scanner
@@ -497,7 +502,7 @@ def _check_collection(api: JewelBoxApi, disc: DiscInfo, *,
         cover_url=disc.cover_url,
         tracks=[
             TrackPayload(position=t.number, title=t.title,
-                         duration=t.duration_label)
+                         duration=t.duration_label, disc=disc.disc_number)
             for t in disc.tracks
         ],
     )
@@ -519,6 +524,73 @@ def _check_collection(api: JewelBoxApi, disc: DiscInfo, *,
                         assume_yes=assume_yes)
 
     return True
+
+
+def _add_missing_disc(api: JewelBoxApi, existing: dict[str, Any],
+                      disc: DiscInfo, *, dry_run: bool,
+                      assume_yes: bool) -> None:
+    """Ajoute les pistes du CD inséré à un album qui ne les a pas encore.
+
+    Sur un coffret, l'album est créé avec le premier CD extrait : les
+    suivants doivent y ajouter leurs pistes, faute de quoi leurs fichiers
+    resteraient non appariés.
+    """
+    try:
+        album_id = int(existing['id'])
+        album = api.get_album(album_id)
+    except (ApiError, KeyError, TypeError, ValueError) as exc:
+        _warn(f'Lecture des pistes de l\'album impossible : {exc}')
+        return
+
+    tracks = album.get('tracks') or []
+    if any(_disc_of(t) == disc.disc_number for t in tracks):
+        return
+
+    # Un coffret saisi avant la gestion des CD a toutes ses pistes sur le
+    # CD 1 : y ajouter celles-ci les mettrait en double.
+    known = {str(t.get('title') or '').casefold() for t in tracks}
+    already = sum(1 for t in disc.tracks if t.title.casefold() in known)
+    if disc.tracks and already * 2 >= len(disc.tracks):
+        _warn(f'Les pistes du CD {disc.disc_number} semblent déjà saisies '
+              'sur un autre CD de cet album : range-les dans le bon CD '
+              'depuis la fiche de l\'album.')
+        return
+
+    _info(f'Le CD {disc.disc_number} n\'a pas encore de pistes dans cet album.')
+    if dry_run:
+        _info(f'  → ses {len(disc.tracks)} pistes seraient ajoutées')
+        return
+    if not _confirm(f'Ajouter les {len(disc.tracks)} pistes du CD '
+                    f'{disc.disc_number} à cet album ?', default=True,
+                    assume_yes=assume_yes):
+        _warn('Pistes non ajoutées — les fichiers ne seront pas appariés.')
+        return
+
+    # PATCH remplace la liste : les pistes existantes sont renvoyées telles
+    # quelles (le serveur les reconnaît à leur CD et leur numéro).
+    payload = [
+        {key: t[key] for key in ('disc', 'position', 'title', 'duration')
+         if t.get(key) is not None}
+        for t in tracks
+    ]
+    payload += [
+        TrackPayload(position=t.number, title=t.title,
+                     duration=t.duration_label,
+                     disc=disc.disc_number).to_json()
+        for t in disc.tracks
+    ]
+    try:
+        api.update_album(album_id, {'tracks': payload})
+        _info(f'{len(disc.tracks)} pistes ajoutées (CD {disc.disc_number}).')
+    except ApiError as exc:
+        _warn(f'Ajout des pistes impossible : {exc}')
+
+
+def _disc_of(track: dict[str, Any]) -> int:
+    try:
+        return int(track.get('disc') or 1)
+    except (TypeError, ValueError):
+        return 1
 
 
 def _run_scan(api: JewelBoxApi) -> None:

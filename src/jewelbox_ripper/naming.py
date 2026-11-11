@@ -102,9 +102,10 @@ def album_relpath(artist: str, album: str, *, disc: int | None = None,
                   disc_total: int | None = None) -> str:
     """Chemin relatif du dossier d'album, sous la racine de la bibliothèque.
 
-    Pour un coffret, on ajoute un sous-dossier « CD1 », « CD2 »… :
-    listFolderAudioFiles() descend d'exactement un niveau, donc cette
-    disposition reste appariable via un dossier associé manuellement.
+    Pour un coffret, on ajoute un sous-dossier « CD1 », « CD2 »… : le
+    scanner du serveur y lit le numéro du CD quand les tags manquent
+    (parsePathFallback), et listFolderAudioFiles() descend d'un niveau pour
+    un dossier associé manuellement.
     """
     parts = [sanitize_component(artist, fallback='Artiste inconnu'),
              sanitize_component(album, fallback='Album inconnu')]
