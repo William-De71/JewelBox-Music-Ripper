@@ -19,7 +19,8 @@ from .config import Config
 from .disc import DiscInfo
 from .loudness import ReplayGainResult, apply_replaygain
 from .naming import album_relpath, track_filename
-from .ripper import EncoderSpec, TrackProgressCallback, rip_and_encode
+from .ripper import (DiskFullError, EncoderSpec, TrackProgressCallback,
+                     rip_and_encode)
 from .tagging import tag_file
 
 # (index 1-based, total, libellé de l'étape en cours)
@@ -113,6 +114,12 @@ def rip_disc(disc: DiscInfo, config: Config, spec: EncoderSpec, *,
                     )
                     tag_file(staged, disc, track)
                     staged_files.append(staged)
+                except DiskFullError as exc:
+                    # Toutes les pistes suivantes échoueraient de même, et
+                    # publier un album à trous masquerait le problème.
+                    raise PipelineError(
+                        f'Rip interrompu à la piste {track.number} : {exc}'
+                    ) from exc
                 except Exception as exc:
                     # Une piste rayée ne doit pas condamner le reste du disque ;
                     # l'échec est reporté dans le bilan final.

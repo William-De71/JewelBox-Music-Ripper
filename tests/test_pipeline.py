@@ -10,7 +10,7 @@ from jewelbox_ripper.config import Config
 from jewelbox_ripper.disc import DiscInfo, TrackInfo
 from jewelbox_ripper.loudness import ReplayGainResult
 from jewelbox_ripper.pipeline import PipelineError, plan_paths, rip_disc
-from jewelbox_ripper.ripper import ENCODERS
+from jewelbox_ripper.ripper import ENCODERS, DiskFullError
 
 
 @pytest.fixture
@@ -142,6 +142,28 @@ class TestRipDisc:
             rip_disc(disc, config, ENCODERS['flac'])
 
         # Le point clé : la bibliothèque est intacte, pas d'album partiel.
+        assert not (config.library_path / 'Pink Floyd').exists()
+
+    def test_disque_plein_interrompt_tout_l_album(self, disc, config,
+                                                  monkeypatch):
+        _fake_rip(monkeypatch)
+        lues = []
+
+        def fake(track, output, spec, **kwargs):
+            lues.append(track.number)
+            if track.number == 2:
+                raise DiskFullError('Espace disque insuffisant')
+            output.write_bytes(b'audio-simule')
+            return output
+
+        monkeypatch.setattr('jewelbox_ripper.pipeline.rip_and_encode', fake)
+
+        with pytest.raises(PipelineError, match='piste 2.*Espace disque'):
+            rip_disc(disc, config, ENCODERS['flac'])
+
+        # Contrairement à une piste rayée, rien n'est publié : un album à
+        # trous masquerait le problème.
+        assert lues == [1, 2]
         assert not (config.library_path / 'Pink Floyd').exists()
 
     def test_pas_de_temporaire_residuel(self, disc, config, monkeypatch):
