@@ -33,6 +33,14 @@ class RipTimeoutError(RipError):
     """cdparanoia a dépassé le temps accordé à la piste."""
 
 
+class DiskFullError(RipError):
+    """Plus assez de place pour écrire la piste.
+
+    Contrairement à une piste rayée, c'est tout le disque qui est condamné :
+    continuer ne produirait que des fichiers vides.
+    """
+
+
 @dataclass(frozen=True)
 class EncoderSpec:
     """Comment produire un format donné à partir d'un WAV."""
@@ -99,6 +107,14 @@ WAV_BYTES_PER_SECOND = 176_400
 WAV_HEADER_BYTES = 44
 PROGRESS_POLL_SECONDS = 0.5
 
+# Espace exigé avant de lire une piste : le WAV intermédiaire, puis le fichier
+# encodé, qui ne dépasse jamais la taille du WAV, cohabitent un instant. Une
+# marge s'y ajoute pour les tags, la pochette et le reste du système.
+FREE_SPACE_MARGIN_BYTES = 64 * 1024 * 1024
+# Durée inconnue (rare) : on prévoit une piste longue ; les contrôles après
+# écriture couvrent le reste.
+FREE_SPACE_UNKNOWN_DURATION_SECONDS = 20 * 60
+
 
 def wav_fraction(size: int, duration_seconds: float | None) -> float | None:
     """Part de la piste déjà écrite dans le WAV. None si la durée est inconnue."""
@@ -140,6 +156,34 @@ def _report_wav_growth(wav: Path, duration_seconds: float | None, phase: str,
     finally:
         stop.set()
         watcher.join()
+
+
+def required_free_bytes(duration_seconds: float | None) -> int:
+    """Place nécessaire pour extraire puis encoder une piste."""
+    seconds = duration_seconds or FREE_SPACE_UNKNOWN_DURATION_SECONDS
+    wav_bytes = int(seconds * WAV_BYTES_PER_SECOND) + WAV_HEADER_BYTES
+    return 2 * wav_bytes + FREE_SPACE_MARGIN_BYTES
+
+
+def ensure_free_space(directory: Path, needed: int) -> None:
+    """Refuse de lancer une piste qui ne tiendrait pas sur le disque.
+
+    Sur un partage réseau (CIFS), un disque plein ne fait pas toujours échouer
+    les écritures : les fichiers sont tronqués sans erreur visible. Mieux vaut
+    s'arrêter avant.
+    """
+    try:
+        free = shutil.disk_usage(directory).free
+    except OSError:
+        # Impossible de savoir : les contrôles après écriture prennent le relais.
+        return
+    if free < needed:
+        raise DiskFullError(
+            f'Espace disque insuffisant dans {directory} : '
+            f'{free // (1024 * 1024)} Mo libres, '
+            f'{needed // (1024 * 1024)} Mo nécessaires. '
+            'Libère de la place avant de relancer.'
+        )
 
 
 def rip_budget(duration_seconds: float | None) -> float:
@@ -216,7 +260,36 @@ def rip_track(track_number: int, destination: Path, *,
             f'Extraction de la piste {track_number} : fichier vide ou absent'
         )
 
+    # Un en-tête sans aucun échantillon : cdparanoia n'a rien pu écrire, le
+    # plus souvent parce que le disque de destination est plein.
+    if destination.stat().st_size <= WAV_HEADER_BYTES:
+        raise DiskFullError(
+            f'Extraction de la piste {track_number} : aucune donnée audio '
+            f'écrite dans {destination.parent}. Le disque est probablement plein.'
+        )
+
     return destination
+
+
+def verify_encoded(output: Path, spec: EncoderSpec) -> None:
+    """Relit le fichier encodé pour vérifier qu'il est complet.
+
+    Un FLAC tronqué par un disque plein garde un en-tête valide (titre,
+    durée…) : seule une relecture complète révèle qu'il n'y a pas de son.
+    """
+    if spec.name != 'flac':
+        return
+    try:
+        result = subprocess.run([spec.binary, '--test', '--silent', str(output)],
+                                capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise RipError(f'Vérification de {output.name} impossible : {exc}') from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or '').strip()
+        raise DiskFullError(
+            f'{output.name} est incomplet après encodage (disque plein ?) : '
+            f'{detail}'
+        )
 
 
 def encode(wav: Path, output: Path, spec: EncoderSpec,
@@ -237,6 +310,7 @@ def encode(wav: Path, output: Path, spec: EncoderSpec,
     if not output.exists() or output.stat().st_size == 0:
         raise RipError(f'Encodage {spec.name.upper()} : fichier vide ou absent')
 
+    verify_encoded(output, spec)
     return output
 
 
@@ -257,6 +331,10 @@ def rip_and_encode(track: TrackInfo, output: Path, spec: EncoderSpec, *,
     budget = rip_budget(track.duration_seconds)
     duration = track.duration_seconds
     degraded = False
+    needed = required_free_bytes(duration)
+    ensure_free_space(workdir, needed)
+    if output.parent != workdir:
+        ensure_free_space(output.parent, needed)
     try:
         try:
             with _report_wav_growth(wav, duration, PHASE_READ, on_progress):

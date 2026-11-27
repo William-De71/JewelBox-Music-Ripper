@@ -14,6 +14,7 @@ import pytest
 from jewelbox_ripper.disc import TrackInfo
 from jewelbox_ripper.ripper import (
     ENCODERS,
+    DiskFullError,
     EncoderSpec,
     MissingToolError,
     RipError,
@@ -23,8 +24,10 @@ from jewelbox_ripper.ripper import (
     find_cdparanoia,
     resolve_encoder,
     rip_and_encode,
+    required_free_bytes,
     rip_budget,
     rip_track,
+    verify_encoded,
     wav_fraction,
 )
 
@@ -49,7 +52,8 @@ def _run_writing(monkeypatch, target: Path, *, returncode=0, stderr=''):
         seen['command'] = command
         if returncode == 0:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(b'donnees-simulees')
+            # En-tête WAV (44 octets) suivi d'un peu d'audio.
+            target.write_bytes(b'\0' * 44 + b'donnees-simulees')
         return FakeCompleted(returncode, stderr=stderr)
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
@@ -193,6 +197,18 @@ class TestRipTrack:
 
         with pytest.raises(RipError, match='vide ou absent'):
             rip_track(1, tmp_path / 'o.wav')
+
+    def test_en_tete_sans_audio_refuse(self, tmp_path, monkeypatch, cdparanoia):
+        # Disque plein : cdparanoia n'écrit que l'en-tête et sort sans erreur.
+        wav = tmp_path / 't.wav'
+
+        def fake_run(command, **kwargs):
+            wav.write_bytes(b'\0' * 44)
+            return FakeCompleted(0)
+
+        monkeypatch.setattr(subprocess, 'run', fake_run)
+        with pytest.raises(DiskFullError, match='aucune donnée audio'):
+            rip_track(3, wav)
 
     def test_binaire_illancable(self, tmp_path, monkeypatch, cdparanoia):
         def boom(*a, **kw):
@@ -511,3 +527,119 @@ class TestEject:
         monkeypatch.setattr(subprocess, 'run', fake_run)
         eject('/dev/sr1')
         assert '/dev/sr1' in seen['command']
+
+
+class TestFreeSpace:
+    def test_wav_et_sortie_plus_marge(self):
+        # 10 s : 1 764 044 octets de WAV, comptés deux fois, plus 64 Mo.
+        assert required_free_bytes(10) == 2 * 1_764_044 + 64 * 1024 * 1024
+
+    def test_duree_inconnue_prevoit_large(self):
+        assert required_free_bytes(None) == required_free_bytes(20 * 60)
+
+    def _usage(self, monkeypatch, free):
+        class Usage:
+            pass
+        usage = Usage()
+        usage.free = free
+        monkeypatch.setattr('shutil.disk_usage', lambda p: usage)
+
+    def test_disque_plein_avant_lecture(self, tmp_path, monkeypatch):
+        self._usage(monkeypatch, 10 * 1024 * 1024)
+        lu = []
+        monkeypatch.setattr('jewelbox_ripper.ripper.rip_track',
+                            lambda *a, **k: lu.append(1))
+
+        with pytest.raises(DiskFullError, match='10 Mo libres'):
+            rip_and_encode(TrackInfo(1, 'T', 200.0), tmp_path / 'o.flac',
+                           ENCODERS['flac'], workdir=tmp_path)
+        # Rien n'est lu : le CD n'est même pas sollicité.
+        assert lu == []
+
+    def test_dossier_de_sortie_aussi_verifie(self, tmp_path, monkeypatch):
+        work, out_dir = tmp_path / 'w', tmp_path / 'o'
+        work.mkdir()
+        out_dir.mkdir()
+
+        class Usage:
+            def __init__(self, free):
+                self.free = free
+
+        monkeypatch.setattr(
+            'shutil.disk_usage',
+            lambda p: Usage(10**12 if Path(p) == work else 1024))
+        with pytest.raises(DiskFullError):
+            rip_and_encode(TrackInfo(1, 'T', 200.0), out_dir / 'o.flac',
+                           ENCODERS['flac'], workdir=work)
+
+    def test_espace_inconnu_ne_bloque_pas(self, tmp_path, monkeypatch):
+        def boom(p):
+            raise OSError('statvfs indisponible')
+
+        monkeypatch.setattr('shutil.disk_usage', boom)
+
+        def fake_rip(number, destination, **kwargs):
+            destination.write_bytes(b'RIFF')
+            return destination
+
+        def fake_encode(wav, output, spec, quality=None):
+            output.write_bytes(b'fLaC')
+            return output
+
+        monkeypatch.setattr('jewelbox_ripper.ripper.rip_track', fake_rip)
+        monkeypatch.setattr('jewelbox_ripper.ripper.encode', fake_encode)
+        out = rip_and_encode(TrackInfo(1, 'T', 200.0), tmp_path / 'o.flac',
+                             ENCODERS['flac'], workdir=tmp_path)
+        assert out.exists()
+
+
+class TestVerifyEncoded:
+    def test_flac_relu(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def fake_run(command, **kwargs):
+            seen['command'] = command
+            return FakeCompleted(0)
+
+        monkeypatch.setattr(subprocess, 'run', fake_run)
+        out = tmp_path / 'o.flac'
+        verify_encoded(out, ENCODERS['flac'])
+        assert seen['command'] == ['flac', '--test', '--silent', str(out)]
+
+    def test_flac_tronque_refuse(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            subprocess, 'run',
+            lambda c, **k: FakeCompleted(1, stderr='unexpected end of file'))
+        with pytest.raises(DiskFullError, match='incomplet'):
+            verify_encoded(tmp_path / 'o.flac', ENCODERS['flac'])
+
+    def test_verification_illancable(self, tmp_path, monkeypatch):
+        def boom(*a, **kw):
+            raise OSError('introuvable')
+
+        monkeypatch.setattr(subprocess, 'run', boom)
+        with pytest.raises(RipError, match='impossible'):
+            verify_encoded(tmp_path / 'o.flac', ENCODERS['flac'])
+
+    def test_formats_avec_perte_non_relus(self, tmp_path, monkeypatch):
+        def boom(*a, **kw):
+            raise AssertionError('ne doit pas être appelé')
+
+        monkeypatch.setattr(subprocess, 'run', boom)
+        verify_encoded(tmp_path / 'o.opus', ENCODERS['opus'])
+        verify_encoded(tmp_path / 'o.mp3', ENCODERS['mp3'])
+
+    def test_encode_refuse_un_flac_tronque(self, tmp_path, monkeypatch):
+        wav = tmp_path / 'in.wav'
+        wav.write_bytes(b'RIFF')
+        out = tmp_path / 'o.flac'
+
+        def fake_run(command, **kwargs):
+            if '--test' in command:
+                return FakeCompleted(1, stderr='unexpected end of file')
+            out.write_bytes(b'fLaC')
+            return FakeCompleted(0)
+
+        monkeypatch.setattr(subprocess, 'run', fake_run)
+        with pytest.raises(DiskFullError):
+            encode(wav, out, ENCODERS['flac'])
